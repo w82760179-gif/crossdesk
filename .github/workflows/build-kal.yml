@@ -89,6 +89,7 @@ jobs:
 
   build-android:
     name: Build Android
+    if: github.event_name == 'workflow_dispatch'
     uses: ./.github/workflows/build-android.yml
     with:
       patch: ${{ inputs.patch || '0' }}

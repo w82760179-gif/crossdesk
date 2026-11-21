@@ -173,7 +173,6 @@ void GuiRuntime::HandleDisplayResolutionChanges() {
     }
     if (collapsed_now) {
       LOG_INFO("Collapsed multi-display topology to single display for remote session");
-      devices_.SyncDisplayInfo();
       next_display_resolution_poll_ = 0;
     }
   }
