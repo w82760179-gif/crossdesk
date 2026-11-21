@@ -7,6 +7,7 @@
 #ifdef _WIN32
 #include "interactive_desktop.h"
 #include "platform/windows/screen_capturer/display_resolution_win.h"
+#include "platform/windows/screen_capturer/single_display_win.h"
 #elif defined(__APPLE__)
 #include "platform/macos/screen_capturer/display_resolution_mac.h"
 #elif defined(__linux__) && !defined(__OHOS__)
@@ -18,6 +19,9 @@ namespace {
 // Serialize native queries on transport threads with mode changes on the
 // application thread (EnumDisplaySettings also caches its enumeration).
 std::mutex native_display_resolution_mutex;
+#ifdef _WIN32
+WindowsSingleDisplayGuard windows_single_display_guard;
+#endif
 } // namespace
 
 std::vector<DisplayResolutionInfo> GuiRuntime::QueryHostDisplayResolutions() {
@@ -117,8 +121,14 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
   const auto epoch = display_resolution_epoch_.load();
   const bool disconnected = epoch != handled_display_resolution_epoch_;
   handled_display_resolution_epoch_ = epoch;
+#ifdef _WIN32
+  if (display_resolution_restoration_.Empty() &&
+      !windows_single_display_guard.Collapsed())
+    return;
+#else
   if (display_resolution_restoration_.Empty())
     return;
+#endif
   const auto now = SDL_GetTicks();
   // A disconnect boundary must survive a rapid reconnect. Otherwise retry
   // failed restoration only while idle, without disrupting an active session.
@@ -132,15 +142,42 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
   if (!IsCurrentSessionUserDesktopActive())
     return;
 #endif
-  if (display_resolution_restoration_.RestoreAll())
-    LOG_INFO("Restored original display modes after remote control");
-  else if (disconnected || force)
-    LOG_WARN("Could not restore every display mode; will retry while idle");
+  if (!display_resolution_restoration_.Empty()) {
+    if (display_resolution_restoration_.RestoreAll())
+      LOG_INFO("Restored original display modes after remote control");
+    else if (disconnected || force)
+      LOG_WARN("Could not restore every display mode; will retry while idle");
+  }
+#ifdef _WIN32
+  if (windows_single_display_guard.Collapsed()) {
+    if (windows_single_display_guard.Restore())
+      LOG_INFO("Restored original multi-display topology after remote control");
+    else if (disconnected || force)
+      LOG_WARN("Could not restore multi-display topology; will retry while idle");
+  }
+#endif
   next_display_resolution_poll_ = 0;
 }
 
 void GuiRuntime::HandleDisplayResolutionChanges() {
   RestoreHostDisplayResolutions();
+#ifdef _WIN32
+  if (!stopping_ && !ConnectedControllers().empty() &&
+      IsCurrentSessionUserDesktopActive()) {
+    bool collapsed_now = false;
+    {
+      std::lock_guard lock(native_display_resolution_mutex);
+      if (!windows_single_display_guard.Collapsed()) {
+        collapsed_now = windows_single_display_guard.CollapseIfMultiDisplay();
+      }
+    }
+    if (collapsed_now) {
+      LOG_INFO("Collapsed multi-display topology to single display for remote session");
+      devices_.SyncDisplayInfo();
+      next_display_resolution_poll_ = 0;
+    }
+  }
+#endif
   std::vector<std::pair<std::string, InitialDisplayResolutions>> initial;
   {
     std::lock_guard lock(display_resolution_commands_mutex_);

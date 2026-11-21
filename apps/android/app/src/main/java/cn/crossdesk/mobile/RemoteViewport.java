@@ -5,12 +5,23 @@ final class RemoteViewport {
     private static final float MAXIMUM_SCALE = 10;
     private static final float MINIMUM_VISIBLE_HEIGHT_FRACTION = .2f;
     private int baseWidth, baseHeight, baseLeft, baseTop, containerHeight;
-    private boolean edgePanned;
+    private boolean edgePanned, fillScreen;
     private float scale = 1, offsetX, offsetY;
+
+    void setFillScreen(boolean value) { fillScreen = value; }
+    boolean fillScreen() { return fillScreen; }
 
     void fit(int width, int height, int videoWidth, int videoHeight) {
         if (width <= 0 || height <= 0 || videoWidth <= 0 || videoHeight <= 0) return;
         containerHeight = height;
+        if (fillScreen) {
+            baseWidth = width;
+            baseHeight = height;
+            baseLeft = 0;
+            baseTop = 0;
+            constrainOffset();
+            return;
+        }
         double fitScale = Math.min((double) width / videoWidth, (double) height / videoHeight);
         baseWidth = Math.max(1, (int) (videoWidth * fitScale));
         baseHeight = Math.max(1, (int) (videoHeight * fitScale));

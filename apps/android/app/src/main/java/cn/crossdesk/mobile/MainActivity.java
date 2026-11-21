@@ -155,10 +155,29 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     // Android 8–10 require system UI flags instead of WindowInsetsController.
     @SuppressWarnings("deprecation")
     private void applySystemBars(boolean dark){
+        if(android.os.Build.VERSION.SDK_INT>=28){
+            WindowManager.LayoutParams lp=getWindow().getAttributes();
+            lp.layoutInDisplayCutoutMode=dark?WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES:WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+            getWindow().setAttributes(lp);
+        }
         if(android.os.Build.VERSION.SDK_INT>=30){
             android.view.WindowInsetsController controller=getWindow().getInsetsController();
-            if(controller!=null){int light=android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;controller.setSystemBarsAppearance(dark?0:light,light);}
-        }else getWindow().getDecorView().setSystemUiVisibility(dark?0:View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            if(controller!=null){
+                int light=android.view.WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|android.view.WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS;
+                controller.setSystemBarsAppearance(dark?0:light,light);
+                if(dark){
+                    controller.setSystemBarsBehavior(android.view.WindowInsetsController.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE);
+                    controller.hide(WindowInsets.Type.systemBars());
+                }else{
+                    controller.show(WindowInsets.Type.systemBars());
+                }
+            }
+        }else{
+            int flags=dark
+                ?(View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY|View.SYSTEM_UI_FLAG_FULLSCREEN|View.SYSTEM_UI_FLAG_HIDE_NAVIGATION|View.SYSTEM_UI_FLAG_LAYOUT_STABLE|View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN|View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION)
+                :(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+            getWindow().getDecorView().setSystemUiVisibility(flags);
+        }
     }
     private EditText field(String hint,int type){
         EditText v=new EditText(this);v.setHint(hint);v.setContentDescription(hint);v.setInputType(type);v.setSingleLine(true);v.setTextSize(17);v.setTextColor(INK);v.setHintTextColor(SECONDARY);
@@ -339,13 +358,16 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     }
     private void sessionScreen(boolean autoLandscape){
         installRoot("session",true);remoteOrientation.begin(autoLandscape,!isTablet()&&!isInMultiWindowMode());video=new RemoteVideoView(this,session);video.setRelative(preferences.getBoolean("relativeMouse",true));
-        // Video, cursor and touch input must share the area inside system bars
-        // and display cutouts; fitting to the outer canvas hides image edges.
-        safeArea.addView(video,0,new FrameLayout.LayoutParams(-1,-1));
+        // Immersive full-bleed video across the entire display (including cutout/bars)
+        // while keeping floating controls in safeArea.
+        boolean fillScreen=preferences.getBoolean("fillScreen",!isTablet());
+        video.setFillScreen(fillScreen);
+        canvas.addView(video,0,new FrameLayout.LayoutParams(-1,-1));
         controls=new SessionControls(this,ui,new SessionControls.Actions(){
             public void disconnect(){confirmDisconnect();}public void display(){selectDisplay();}public void clipboard(){MainActivity.this.clipboard();}
             public void sendFile(){chooseFile();}public void saveFile(){saveReceivedFile();}public void secureAttention(){MainActivity.this.secureAttention();}
             public void togglePrivacy(){if(ready&&session!=null)session.togglePrivacy();}
+            public void fillScreen(boolean fill){preferences.edit().putBoolean("fillScreen",fill).apply();if(video!=null)video.setFillScreen(fill);if(controls!=null)controls.setFillScreen(fill);}
             public void key(int code){tapKey(code);}
             public boolean textEdit(int count,String value){return sendTextEdit(count,value);}
             public void chord(int code,int[] modifiers){if(ready&&session!=null)session.chord(code,modifiers);}public void shortcut(int code){MainActivity.this.shortcut(code);}public void text(String value){sendText(value);}
@@ -353,7 +375,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             public void mouse(){boolean relative=!preferences.getBoolean("relativeMouse",true);preferences.edit().putBoolean("relativeMouse",relative).apply();video.setRelative(relative);controls.setRelative(relative);}
             public void displayResolution(RemoteDisplayResolutions.Mode mode){updateDisplayResolution(mode);}
             public void videoSettings(int field,int value){RemoteVideoSettings.Values old=MainActivity.this.videoSettings.selection;updateVideoSettings(new RemoteVideoSettings.Values(field==0?value:old.quality,field==1?value:old.frameRate,field==2?value:old.preference));}
-        });controls.setHostPlatform(hostPlatform);controls.setRelative(preferences.getBoolean("relativeMouse",true));controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });controls.setHostPlatform(hostPlatform);controls.setRelative(preferences.getBoolean("relativeMouse",true));controls.setFillScreen(fillScreen);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         controls.attachMouseBar(canvas,new VirtualMouseBar(ui,video.mouseInput));
         privacyChanged();
         video.remoteFocusChanged=()->{if(controls!=null)controls.resetKeyboardContext();};

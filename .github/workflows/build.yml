@@ -5,6 +5,7 @@ on:
     branches:
       - "**"
       - "!ci/linux-build-image"
+      - "!kal-custom"
     tags:
       - "*"
       - "!ios-v*"

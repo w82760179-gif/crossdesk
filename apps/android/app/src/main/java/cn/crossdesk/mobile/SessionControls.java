@@ -17,6 +17,7 @@ final class SessionControls extends FrameLayout {
         default void displayResolution(RemoteDisplayResolutions.Mode mode) { }
         void sendFile(); void saveFile(); void secureAttention();
         default void togglePrivacy() { }
+        default void fillScreen(boolean fill) { }
     }
     private final MobileUi ui;
     private final Actions actions;
@@ -27,7 +28,7 @@ final class SessionControls extends FrameLayout {
     private final RemoteKeyboard keyboard;
     private VirtualMouseBar mouseBar;
     private FrameLayout mouseHost;
-    private boolean mouseVisible,pictureInPicture;
+    private boolean mouseVisible,pictureInPicture,fillScreen;
     private ScrollView menuScroll;
     private int menuColumns=3;
     private final ViewTreeObserver.OnGlobalLayoutListener legacyKeyboardLayout=this::legacyKeyboardLayout;
@@ -70,6 +71,7 @@ final class SessionControls extends FrameLayout {
         orb.setBackground(ui.background(0xFFF5F5F7,27));orb.setElevation(ui.dp(7));addView(orb,new LayoutParams(ui.dp(54),ui.dp(54)));
         drag(orb,orb,()->{if(menu==null)openMenu("controls");else closeMenu();});
     }
+    void setFillScreen(boolean value){fillScreen=value;}
     void setRelative(boolean value){relative=value;if(menu!=null&&menuPage.equals("controls"))openMenu("controls");}
     void setHostPlatform(String platform){
         keyboard.setPlatform(platform);
@@ -165,6 +167,15 @@ final class SessionControls extends FrameLayout {
             settingRows.add(new SettingRow(body,0,L10n.tr("画面质量"),new String[]{L10n.tr("低"),L10n.tr("中"),L10n.tr("高")},new int[]{0,1,2}));ui.gap(body,12);
             settingRows.add(new SettingRow(body,1,L10n.tr("画面采集帧率"),new String[]{"30 fps","60 fps"},new int[]{30,60}));ui.gap(body,12);
             settingRows.add(new SettingRow(body,2,L10n.tr("画面偏好"),RemoteVideoSettings.preferences(),new int[]{0,1,2}));renderVideoSettings();
+            ui.gap(body,12);
+            TextView scaleTitle=ui.text("画面覆盖模式",12,false);scaleTitle.setTextColor(SECONDARY);body.addView(scaleTitle);ui.gap(body,5);
+            String[] scaleLabels={"适应比例","铺满全屏"};
+            SegmentedControl scaleGroup=new SegmentedControl(ui,scaleLabels,fillScreen?1:0,true,index->{fillScreen=(index==1);actions.fillScreen(fillScreen);});
+            scaleGroup.setPadding(ui.dp(2),ui.dp(2),ui.dp(2),ui.dp(2));body.addView(scaleGroup);
+            for(int i=0;i<scaleLabels.length;i++){
+                TextView button=(TextView)scaleGroup.getChildAt(i);button.setTextSize(12);button.setMinHeight(ui.dp(28));button.setSingleLine();
+                button.setLayoutParams(new LinearLayout.LayoutParams(0,ui.dp(28),1));
+            }
         }
         ui.gap(menu,9);TextView disconnect=ui.action(L10n.tr("断开连接"),Color.WHITE,()->{closeMenu();closeKeyboard();actions.disconnect();});disconnect.setMinHeight(ui.dp(34));disconnect.setTextSize(14);disconnect.setBackground(ui.background(RED,8));menu.addView(disconnect,ui.size(-1,34));
         addView(menu,new LayoutParams(panelWidth(getWidth()),panelHeight(getHeight())));orb.bringToFront();orb.setContentDescription(L10n.tr("收起远程控制菜单"));

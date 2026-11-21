@@ -37,6 +37,12 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     private long touchRevision;
     private boolean suppressPointerGesture;
     void setRelative(boolean value) { releaseMouse(); relative=value; }
+    void setFillScreen(boolean value) {
+        if (viewport.fillScreen() == value) return;
+        viewport.setFillScreen(value);
+        viewport.reset();
+        fit();
+    }
     void setPictureInPicture(boolean value) {
         if(pictureInPicture==value)return;
         releaseMouse();pictureInPicture=value;cursor.setVisibility(value?GONE:VISIBLE);fit();
