@@ -12,7 +12,10 @@ import zipfile
 def verify_package_version(badging, version_name, version_code):
     package = next((line for line in badging.splitlines() if line.startswith('package: ')), '')
     attributes = dict(re.findall(r"(\w+)='([^']*)'", package))
-    expected = {'name': 'cn.crossdesk.mobile', 'versionName': version_name, 'versionCode': str(version_code)}
+    package_name = 'cn.crossdesk.mobile'
+    if 'application-debuggable' in badging.splitlines():
+        package_name += '.tablet'
+    expected = {'name': package_name, 'versionName': version_name, 'versionCode': str(version_code)}
     for key, value in expected.items():
         if attributes.get(key) != value:
             raise ValueError(f'Unexpected APK {key}: expected {value!r}, got {attributes.get(key)!r}')
