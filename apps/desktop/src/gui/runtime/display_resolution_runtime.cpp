@@ -173,6 +173,17 @@ void GuiRuntime::HandleDisplayResolutionChanges() {
     }
     if (collapsed_now) {
       LOG_INFO("Collapsed multi-display topology to single display for remote session");
+      // Recreate capturer cleanly so the newly activated virtual/single display
+      // becomes slot 0 with fresh resolution enumeration (no stale dead slots).
+      if (screen_capturer_is_started_) {
+        devices_.StopScreenCapturer();
+        devices_.InitializeScreenCapturer();
+        if (devices_.StartScreenCapturer() == 0) {
+          screen_capturer_is_started_ = true;
+        }
+      }
+      selected_display_ = 0;
+      last_display_resolutions_.clear();
       next_display_resolution_poll_ = 0;
     }
   }

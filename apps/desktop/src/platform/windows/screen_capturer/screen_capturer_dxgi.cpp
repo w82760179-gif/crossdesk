@@ -213,6 +213,17 @@ bool ScreenCapturerDxgi::EnumerateDisplays() {
   }
   display_info_list_ = std::move(displays);
   outputs_ = std::move(outputs);
+  if (monitor_index_ < 0 || monitor_index_ >= (int)outputs_.size() ||
+      !outputs_[monitor_index_]) {
+    for (size_t slot = 0; slot < outputs_.size(); ++slot) {
+      if (outputs_[slot]) {
+        LOG_INFO("DXGI: auto-switching from unavailable slot {} to available slot {} ({})",
+                 monitor_index_.load(), slot, display_info_list_[slot].name);
+        monitor_index_ = static_cast<int>(slot);
+        break;
+      }
+    }
+  }
   if (changed) {
     for (size_t slot = 0; slot < display_info_list_.size(); ++slot) {
       const auto& display = display_info_list_[slot];

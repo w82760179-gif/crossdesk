@@ -40,8 +40,6 @@ class WindowsSingleDisplayGuard {
     //    (supports custom 7:5 tablet & 20:9 phone native resolutions).
     const auto vdd_devices = FindUsbmmiddDeviceNames();
     if (!vdd_devices.empty()) {
-      // If we are already exclusively on the single usbmmidd virtual display,
-      // nothing to switch.
       if (active_paths.size() == 1 &&
           IsPathInDeviceSet(active_paths[0], vdd_devices)) {
         return false;
@@ -57,6 +55,9 @@ class WindowsSingleDisplayGuard {
             1, &vdd_path, 0, nullptr,
             SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES);
         if (vdd_status == ERROR_SUCCESS) {
+          // Apply preferred 7:5 OPPO Pad 5 resolution (2400x1696) immediately
+          // so Windows doesn't default to 3840x2160.
+          ApplyPreferredUsbmmiddMode(2400, 1696);
           saved_paths_ = std::move(active_paths);
           saved_modes_ = std::move(active_modes);
           collapsed_ = true;
@@ -125,6 +126,29 @@ class WindowsSingleDisplayGuard {
   }
 
  private:
+  static void ApplyPreferredUsbmmiddMode(DWORD pref_w, DWORD pref_h) {
+    for (DWORD index = 0;; ++index) {
+      DISPLAY_DEVICEW dd{};
+      dd.cb = sizeof(dd);
+      if (!EnumDisplayDevicesW(nullptr, index, &dd, 0)) break;
+      if ((dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) &&
+          std::wcsstr(dd.DeviceString, L"USB Mobile Monitor") != nullptr) {
+        DEVMODEW mode{};
+        mode.dmSize = sizeof(mode);
+        for (DWORD m = 0; EnumDisplaySettingsW(dd.DeviceName, m, &mode); ++m) {
+          if (mode.dmPelsWidth == pref_w && mode.dmPelsHeight == pref_h &&
+              mode.dmBitsPerPel == 32) {
+            mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL |
+                            DM_DISPLAYFREQUENCY;
+            ChangeDisplaySettingsExW(dd.DeviceName, &mode, nullptr, 0, nullptr);
+            return;
+          }
+        }
+        return;
+      }
+    }
+  }
+
   static std::set<std::wstring> FindUsbmmiddDeviceNames() {
     std::set<std::wstring> devices;
     for (DWORD index = 0;; ++index) {
