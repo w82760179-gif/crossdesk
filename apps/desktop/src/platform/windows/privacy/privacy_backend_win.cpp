@@ -381,11 +381,9 @@ class WindowsPrivacyBackend final : public PrivacyBackend {
             last_obstruction_ = above;
             last_obstruction_log_ = now;
           }
-          // HWND order cannot prove compositor order, but this window may
-          // display content. Report failure so optional privacy is released.
-          return {
-              "A visible window may overlap privacy coverage",
-              false};
+          // Do not drop the privacy cover when transient high-band overlays
+          // (such as Windows IME candidate windows while typing) appear.
+          continue;
         }
       }
     }

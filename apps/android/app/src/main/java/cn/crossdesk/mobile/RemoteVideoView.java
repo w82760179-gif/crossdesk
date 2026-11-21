@@ -36,6 +36,8 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     private float lastX,lastY,twoFingerX,twoFingerY;
     private long touchRevision;
     private boolean suppressPointerGesture;
+    private boolean captureMouse = true;
+    private int capturedButtons = 0;
     void setRelative(boolean value) { releaseMouse(); relative=value; }
     void setFillScreen(boolean value) {
         if (viewport.fillScreen() == value) return;
@@ -43,9 +45,19 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         viewport.reset();
         fit();
     }
+    void setCaptureMouse(boolean value) {
+        captureMouse = value;
+        if (!value) releasePointerCaptureSafe();
+    }
+    void releasePointerCaptureSafe() {
+        capturedButtons = 0;
+        if (android.os.Build.VERSION.SDK_INT >= 26 && hasPointerCapture()) {
+            releasePointerCapture();
+        }
+    }
     void setPictureInPicture(boolean value) {
         if(pictureInPicture==value)return;
-        releaseMouse();pictureInPicture=value;cursor.setVisibility(value?GONE:VISIBLE);fit();
+        releaseMouse();if(value)releasePointerCaptureSafe();pictureInPicture=value;cursor.setVisibility(value?GONE:VISIBLE);fit();
     }
     Rect pictureInPictureBounds() {
         Rect bounds=new Rect();video.getGlobalVisibleRect(bounds);return bounds;
@@ -59,6 +71,8 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         mouseInput = new RemoteMouseInput(this::sendMouse);
         mouseInput.relativeMotion = this::moveRelative;
         setBackgroundColor(Color.BLACK);
+        setFocusable(true);
+        setFocusableInTouchMode(true);
         video = new SurfaceView(context); video.getHolder().addCallback(this);
         addView(video, new LayoutParams(1, 1, android.view.Gravity.CENTER));
         cursor = new Cursor(context);
@@ -186,6 +200,16 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
             twoFinger = viewportGesture = viewportPanActive = false;
             touchRevision = mouseInput.revision();
             suppressPointerGesture = mouseInput.hasVirtualButton();
+            int tool = e.getToolType(0);
+            if (tool == MotionEvent.TOOL_TYPE_MOUSE && captureMouse && !pictureInPicture &&
+                android.os.Build.VERSION.SDK_INT >= 26 && !hasPointerCapture()) {
+                point(e);
+                requestFocus();
+                requestPointerCapture();
+            } else if (tool == MotionEvent.TOOL_TYPE_FINGER &&
+                android.os.Build.VERSION.SDK_INT >= 26 && hasPointerCapture()) {
+                releasePointerCaptureSafe();
+            }
         }
         if (action == MotionEvent.ACTION_POINTER_DOWN) {
             if (dragging) { mouseInput.gestureLeft(false); dragging = false; }
@@ -244,7 +268,61 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     @Override public void surfaceCreated(SurfaceHolder holder) { session.surface(holder.getSurface()); }
     @Override public void surfaceChanged(SurfaceHolder holder,int format,int width,int height) { }
     @Override public void surfaceDestroyed(SurfaceHolder holder) { releaseMouse(); session.surface(null); }
-    @Override protected void onDetachedFromWindow() { releaseMouse(); super.onDetachedFromWindow(); }
+    @Override public boolean onGenericMotionEvent(MotionEvent e) {
+        if (pictureInPicture) return super.onGenericMotionEvent(e);
+        if ((e.getSource() & android.view.InputDevice.SOURCE_MOUSE) != 0 ||
+            e.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE) {
+            int action = e.getActionMasked();
+            if (action == MotionEvent.ACTION_HOVER_MOVE) {
+                if (viewport.width() > 0 && viewport.height() > 0) {
+                    x = viewport.normalizedX(e.getX());
+                    y = viewport.normalizedY(e.getY());
+                    mouseInput.move(x, y);
+                    cursor.invalidate();
+                }
+                return true;
+            }
+            if (action == MotionEvent.ACTION_SCROLL) {
+                float v = e.getAxisValue(MotionEvent.AXIS_VSCROLL);
+                if (v != 0) session.pointer(x, y, 7, v > 0 ? 1 : -1);
+                return true;
+            }
+        }
+        return super.onGenericMotionEvent(e);
+    }
+    @Override public boolean onCapturedPointerEvent(MotionEvent e) {
+        if (pictureInPicture || viewport.width() <= 0 || viewport.height() <= 0) return true;
+        int action = e.getActionMasked();
+        if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_HOVER_MOVE) {
+            float dx = e.getX();
+            float dy = e.getY();
+            if (dx != 0 || dy != 0) {
+                x = Math.max(0f, Math.min(1f, x + dx / viewport.width()));
+                y = Math.max(0f, Math.min(1f, y + dy / viewport.height()));
+                mouseInput.move(x, y);
+                cursor.invalidate();
+            }
+        }
+        if (action == MotionEvent.ACTION_SCROLL) {
+            float v = e.getAxisValue(MotionEvent.AXIS_VSCROLL);
+            if (v != 0) session.pointer(x, y, 7, v > 0 ? 1 : -1);
+            return true;
+        }
+        int buttons = e.getButtonState();
+        int changed = buttons ^ capturedButtons;
+        if (changed != 0) {
+            if ((changed & MotionEvent.BUTTON_PRIMARY) != 0)
+                session.pointer(x, y, (buttons & MotionEvent.BUTTON_PRIMARY) != 0 ? 1 : 2, 0);
+            if ((changed & MotionEvent.BUTTON_SECONDARY) != 0)
+                session.pointer(x, y, (buttons & MotionEvent.BUTTON_SECONDARY) != 0 ? 3 : 4, 0);
+            if ((changed & MotionEvent.BUTTON_TERTIARY) != 0)
+                session.pointer(x, y, (buttons & MotionEvent.BUTTON_TERTIARY) != 0 ? 5 : 6, 0);
+            capturedButtons = buttons;
+            cursor.invalidate();
+        }
+        return true;
+    }
+    @Override protected void onDetachedFromWindow() { releasePointerCaptureSafe(); releaseMouse(); super.onDetachedFromWindow(); }
     private final class Cursor extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path arrow = new Path();

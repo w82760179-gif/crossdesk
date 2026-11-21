@@ -109,8 +109,8 @@ class ConfigCenter {
   bool enable_ip_direct_ = true;
   VIDEO_ENCODE_FORMAT video_encode_format_ = VIDEO_ENCODE_FORMAT::H264;
   TURN_MODE turn_mode_ = TURN_MODE::AUTO_UDP_TCP;
-  static constexpr int kDefaultDirectStartBitrateBps = 2'500'000;
-  static constexpr int kDefaultRelayStartBitrateBps = 1'500'000;
+  static constexpr int kDefaultDirectStartBitrateBps = 6'000'000;
+  static constexpr int kDefaultRelayStartBitrateBps = 2'500'000;
   int direct_start_bitrate_bps_ = kDefaultDirectStartBitrateBps;
   int relay_start_bitrate_bps_ = kDefaultRelayStartBitrateBps;
   static constexpr bool kDefaultDisableReceiverPaddingProbing = true;

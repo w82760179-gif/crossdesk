@@ -361,13 +361,28 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         // Immersive full-bleed video across the entire display (including cutout/bars)
         // while keeping floating controls in safeArea.
         boolean fillScreen=preferences.getBoolean("fillScreen",!isTablet());
+        boolean captureMouse=preferences.getBoolean("captureMouse",true);
         video.setFillScreen(fillScreen);
+        video.setCaptureMouse(captureMouse);
         canvas.addView(video,0,new FrameLayout.LayoutParams(-1,-1));
+        if(android.os.Build.VERSION.SDK_INT>=29){
+            video.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or2,ob)->{
+                int w=r-l,h=b-t;
+                if(w>0&&h>0){
+                    int edge=dp(48);
+                    java.util.List<android.graphics.Rect> rects=new java.util.ArrayList<>();
+                    rects.add(new android.graphics.Rect(0,Math.max(0,h-edge),w,h));
+                    v.setSystemGestureExclusionRects(rects);
+                }
+            });
+        }
         controls=new SessionControls(this,ui,new SessionControls.Actions(){
             public void disconnect(){confirmDisconnect();}public void display(){selectDisplay();}public void clipboard(){MainActivity.this.clipboard();}
             public void sendFile(){chooseFile();}public void saveFile(){saveReceivedFile();}public void secureAttention(){MainActivity.this.secureAttention();}
             public void togglePrivacy(){if(ready&&session!=null)session.togglePrivacy();}
             public void fillScreen(boolean fill){preferences.edit().putBoolean("fillScreen",fill).apply();if(video!=null)video.setFillScreen(fill);if(controls!=null)controls.setFillScreen(fill);}
+            public void captureMouse(boolean cap){preferences.edit().putBoolean("captureMouse",cap).apply();if(video!=null)video.setCaptureMouse(cap);if(controls!=null)controls.setCaptureMouse(cap);}
+            public void menuOpened(){if(video!=null)video.releasePointerCaptureSafe();}
             public void key(int code){tapKey(code);}
             public boolean textEdit(int count,String value){return sendTextEdit(count,value);}
             public void chord(int code,int[] modifiers){if(ready&&session!=null)session.chord(code,modifiers);}public void shortcut(int code){MainActivity.this.shortcut(code);}public void text(String value){sendText(value);}
@@ -375,7 +390,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             public void mouse(){boolean relative=!preferences.getBoolean("relativeMouse",true);preferences.edit().putBoolean("relativeMouse",relative).apply();video.setRelative(relative);controls.setRelative(relative);}
             public void displayResolution(RemoteDisplayResolutions.Mode mode){updateDisplayResolution(mode);}
             public void videoSettings(int field,int value){RemoteVideoSettings.Values old=MainActivity.this.videoSettings.selection;updateVideoSettings(new RemoteVideoSettings.Values(field==0?value:old.quality,field==1?value:old.frameRate,field==2?value:old.preference));}
-        });controls.setHostPlatform(hostPlatform);controls.setRelative(preferences.getBoolean("relativeMouse",true));controls.setFillScreen(fillScreen);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });controls.setHostPlatform(hostPlatform);controls.setRelative(preferences.getBoolean("relativeMouse",true));controls.setFillScreen(fillScreen);controls.setCaptureMouse(captureMouse);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         controls.attachMouseBar(canvas,new VirtualMouseBar(ui,video.mouseInput));
         privacyChanged();
         video.remoteFocusChanged=()->{if(controls!=null)controls.resetKeyboardContext();};
@@ -789,7 +804,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     private void releaseKeys(){if(session!=null)for(int code:pressed)session.key(code,false);pressed.clear();}
     private void navigateBack(){if(backAction==null)return;navigatingBack=true;try{backAction.run();}finally{navigatingBack=false;}}
     private void back(){if(controls!=null&&controls.closeKeyboard())return;pageHost.finish();if(session!=null){if(ready)confirmDisconnect();else end("");}else if(backAction!=null)navigateBack();else finish();}
-    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(!focus)releaseKeys();else applySystemBars(ready);}
+    @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(!focus){releaseKeys();if(video!=null)video.releasePointerCaptureSafe();}else applySystemBars(page.equals("session"));}
     // API 26–32 use this callback; API 33+ registers OnBackInvokedCallback in onCreate.
     @SuppressWarnings("deprecation")
     @android.annotation.SuppressLint("GestureBackNavigation") @Override public void onBackPressed(){back();}
@@ -903,7 +918,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     }
     @Override protected void onResume(){super.onResume();privacyChanged();if(!isInPictureInPictureMode())enteredPictureInPicture=false;setPictureInPictureUi(isInPictureInPictureMode());updatePictureInPicture();if(ready&&!canUsePictureInPicture())prepareBackgroundSession(true);if(backgroundSession!=null)requestBackgroundNotifications();}
     // onStart marks a new visit; focus/resume callbacks must not reopen a refused notice.
-    @Override protected void onPause(){releaseKeys();if(controls!=null)controls.cancelMouseInput();if(video!=null)video.releaseMouse();super.onPause();}
+    @Override protected void onPause(){releaseKeys();if(controls!=null)controls.cancelMouseInput();if(video!=null){video.releasePointerCaptureSafe();video.releaseMouse();}super.onPause();}
     @Override protected void onStart(){super.onStart();foreground=true;restoreBackgroundSession();appUpdates.setEnabled(preferences.getBoolean("networkConsent",false));if(!preferences.getBoolean("networkConsent",false))consent(this::renderSignaling);ensureSignaling();showConnectionMessage();}
     @Override protected void onStop(){dismissPrivacyUnlockDialog();if(controls!=null)controls.closeKeyboard();foreground=false;appUpdates.setEnabled(false);if(privacyDialog!=null)privacyDialog.dismiss();pageHost.finish();
         if(connectionDialog!=null)connectionDialog.dismiss();

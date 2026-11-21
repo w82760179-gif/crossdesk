@@ -18,6 +18,8 @@ final class SessionControls extends FrameLayout {
         void sendFile(); void saveFile(); void secureAttention();
         default void togglePrivacy() { }
         default void fillScreen(boolean fill) { }
+        default void captureMouse(boolean capture) { }
+        default void menuOpened() { }
     }
     private final MobileUi ui;
     private final Actions actions;
@@ -28,7 +30,7 @@ final class SessionControls extends FrameLayout {
     private final RemoteKeyboard keyboard;
     private VirtualMouseBar mouseBar;
     private FrameLayout mouseHost;
-    private boolean mouseVisible,pictureInPicture,fillScreen;
+    private boolean mouseVisible,pictureInPicture,fillScreen,captureMouse=true;
     private ScrollView menuScroll;
     private int menuColumns=3;
     private final ViewTreeObserver.OnGlobalLayoutListener legacyKeyboardLayout=this::legacyKeyboardLayout;
@@ -72,6 +74,7 @@ final class SessionControls extends FrameLayout {
         drag(orb,orb,()->{if(menu==null)openMenu("controls");else closeMenu();});
     }
     void setFillScreen(boolean value){fillScreen=value;}
+    void setCaptureMouse(boolean value){captureMouse=value;}
     void setRelative(boolean value){relative=value;if(menu!=null&&menuPage.equals("controls"))openMenu("controls");}
     void setHostPlatform(String platform){
         keyboard.setPlatform(platform);
@@ -126,7 +129,7 @@ final class SessionControls extends FrameLayout {
         if(saveFileButton!=null)saveFileButton.setVisibility(hasReceivedFile?VISIBLE:GONE);
     }
     private void closeMenu(){if(resolutionDialog!=null){resolutionDialog.dismiss();resolutionDialog=null;}resolutionButton=resolutionFeedback=null;if(menu!=null){removeView(menu);menu=null;menuScroll=null;}if(shield!=null){removeView(shield);shield=null;}videoFeedback=transferLabel=saveFileButton=null;privacyFeedback=privacyCaption=null;privacyButton=null;privacyIcon=null;trafficCells=null;trafficRows=null;networkDetails=null;encryptionLock=encryptionOpen=null;settingRows.clear();orb.setContentDescription(L10n.tr("展开远程控制菜单"));positionMouse();}
-    private void openMenu(String page){
+    private void openMenu(String page){actions.menuOpened();
         cancelMouseInput();
         closeMenu();menuPage=page;shield=new View(getContext());shield.setOnClickListener(v->closeMenu());addView(shield,new LayoutParams(-1,-1));
         menu=ui.column();menu.setPadding(ui.dp(12),ui.dp(12),ui.dp(12),ui.dp(12));ui.card(menu,18);menu.setElevation(ui.dp(12));
@@ -174,6 +177,15 @@ final class SessionControls extends FrameLayout {
             scaleGroup.setPadding(ui.dp(2),ui.dp(2),ui.dp(2),ui.dp(2));body.addView(scaleGroup);
             for(int i=0;i<scaleLabels.length;i++){
                 TextView button=(TextView)scaleGroup.getChildAt(i);button.setTextSize(12);button.setMinHeight(ui.dp(28));button.setSingleLine();
+                button.setLayoutParams(new LinearLayout.LayoutParams(0,ui.dp(28),1));
+            }
+            ui.gap(body,12);
+            TextView capTitle=ui.text("实体鼠标锁在框内 (防误触底栏)",12,false);capTitle.setTextColor(SECONDARY);body.addView(capTitle);ui.gap(body,5);
+            String[] capLabels={"关闭","开启"};
+            SegmentedControl capGroup=new SegmentedControl(ui,capLabels,captureMouse?1:0,true,index->{captureMouse=(index==1);actions.captureMouse(captureMouse);});
+            capGroup.setPadding(ui.dp(2),ui.dp(2),ui.dp(2),ui.dp(2));body.addView(capGroup);
+            for(int i=0;i<capLabels.length;i++){
+                TextView button=(TextView)capGroup.getChildAt(i);button.setTextSize(12);button.setMinHeight(ui.dp(28));button.setSingleLine();
                 button.setLayoutParams(new LinearLayout.LayoutParams(0,ui.dp(28),1));
             }
         }
