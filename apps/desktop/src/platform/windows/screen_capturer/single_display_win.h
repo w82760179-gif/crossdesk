@@ -3,9 +3,6 @@
 
 #include <Windows.h>
 
-#include <cwchar>
-#include <set>
-#include <string>
 #include <vector>
 
 namespace crossdesk {
@@ -17,7 +14,7 @@ class WindowsSingleDisplayGuard {
   bool CollapseIfMultiDisplay() {
     if (collapsed_) return false;
 
-    // 1. Snapshot current active display topology for exact restoration.
+    // 1. Snapshot exact active display topology for full restoration.
     UINT32 active_path_count = 0;
     UINT32 active_mode_count = 0;
     if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &active_path_count,
@@ -36,64 +33,38 @@ class WindowsSingleDisplayGuard {
     active_paths.resize(active_path_count);
     active_modes.resize(active_mode_count);
 
-    // 2. Priority 1: Switch exclusively to installed usbmmidd virtual display
-    //    (supports custom 7:5 tablet & 20:9 phone native resolutions).
-    const auto vdd_devices = FindUsbmmiddDeviceNames();
-    if (!vdd_devices.empty()) {
-      if (active_paths.size() == 1 &&
-          IsPathInDeviceSet(active_paths[0], vdd_devices)) {
-        return false;
-      }
-
-      DISPLAYCONFIG_PATH_INFO vdd_path{};
-      if (FindAvailablePathForDevices(vdd_devices, &vdd_path)) {
-        vdd_path.flags |= DISPLAYCONFIG_PATH_ACTIVE;
-        vdd_path.sourceInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-        vdd_path.targetInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-
-        const LONG vdd_status = SetDisplayConfig(
-            1, &vdd_path, 0, nullptr,
-            SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES);
-        if (vdd_status == ERROR_SUCCESS) {
-          // Apply preferred 7:5 OPPO Pad 5 resolution (2400x1696) immediately
-          // so Windows doesn't default to 3840x2160.
-          ApplyPreferredUsbmmiddMode(2400, 1696);
-          saved_paths_ = std::move(active_paths);
-          saved_modes_ = std::move(active_modes);
-          collapsed_ = true;
-          return true;
+    // 2. Switch cleanly to the laptop's built-in internal physical display
+    //    (keeps Intel GPU active so OEM WDTDrv watchdog never triggers,
+    //     gathers all windows from dual screens onto 1 screen, and unlocks
+    //     native 2560x1920 HiDPI 4:3 mode for OPPO Pad 5!).
+    LONG status = SetDisplayConfig(0, nullptr, 0, nullptr,
+                                   SDC_TOPOLOGY_INTERNAL | SDC_APPLY);
+    if (status != ERROR_SUCCESS) {
+      if (active_paths.size() <= 1) return false;
+      size_t primary_index = 0;
+      for (size_t i = 0; i < active_paths.size(); ++i) {
+        const UINT32 idx = active_paths[i].sourceInfo.modeInfoIdx;
+        if (idx != DISPLAYCONFIG_PATH_MODE_IDX_INVALID &&
+            idx < active_modes.size() &&
+            active_modes[idx].infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE &&
+            active_modes[idx].sourceMode.position.x == 0 &&
+            active_modes[idx].sourceMode.position.y == 0) {
+          primary_index = i;
+          break;
         }
       }
+      DISPLAYCONFIG_PATH_INFO single_path = active_paths[primary_index];
+      auto apply_modes = active_modes;
+      status = SetDisplayConfig(
+          1, &single_path, static_cast<UINT32>(apply_modes.size()),
+          apply_modes.data(),
+          SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES);
+      if (status != ERROR_SUCCESS) return false;
     }
 
-    // 3. Priority 2 (Option A fallback): Collapse physical multi-display to
-    //    the single primary display so all windows gather onto one screen.
-    if (active_paths.size() <= 1) return false;
-
-    size_t primary_index = 0;
-    for (size_t i = 0; i < active_paths.size(); ++i) {
-      const UINT32 idx = active_paths[i].sourceInfo.modeInfoIdx;
-      if (idx != DISPLAYCONFIG_PATH_MODE_IDX_INVALID &&
-          idx < active_modes.size() &&
-          active_modes[idx].infoType == DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE &&
-          active_modes[idx].sourceMode.position.x == 0 &&
-          active_modes[idx].sourceMode.position.y == 0) {
-        primary_index = i;
-        break;
-      }
-    }
-
-    DISPLAYCONFIG_PATH_INFO single_path = active_paths[primary_index];
-    std::vector<DISPLAYCONFIG_MODE_INFO> apply_modes = active_modes;
-    LONG status = SetDisplayConfig(
-        1, &single_path, static_cast<UINT32>(apply_modes.size()),
-        apply_modes.data(),
-        SDC_APPLY | SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES);
-    if (status != ERROR_SUCCESS) {
-      status = SetDisplayConfig(0, nullptr, 0, nullptr,
-                                SDC_TOPOLOGY_INTERNAL | SDC_APPLY);
-    }
-    if (status != ERROR_SUCCESS) return false;
+    // Apply crisp HiDPI 4:3 mode (2560x1920, fallback 2048x1536) on the active
+    // single display if supported — fills ~94% of 7:5 OPPO Pad 5 razor-sharp!
+    ApplyPreferredActiveMode(2560, 1920);
 
     saved_paths_ = std::move(active_paths);
     saved_modes_ = std::move(active_modes);
@@ -126,81 +97,32 @@ class WindowsSingleDisplayGuard {
   }
 
  private:
-  static void ApplyPreferredUsbmmiddMode(DWORD pref_w, DWORD pref_h) {
+  static void ApplyPreferredActiveMode(DWORD pref_w, DWORD pref_h) {
     for (DWORD index = 0;; ++index) {
       DISPLAY_DEVICEW dd{};
       dd.cb = sizeof(dd);
       if (!EnumDisplayDevicesW(nullptr, index, &dd, 0)) break;
-      if ((dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP) &&
-          std::wcsstr(dd.DeviceString, L"USB Mobile Monitor") != nullptr) {
-        DEVMODEW mode{};
-        mode.dmSize = sizeof(mode);
-        for (DWORD m = 0; EnumDisplaySettingsW(dd.DeviceName, m, &mode); ++m) {
-          if (mode.dmPelsWidth == pref_w && mode.dmPelsHeight == pref_h &&
-              mode.dmBitsPerPel == 32) {
-            mode.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL |
-                            DM_DISPLAYFREQUENCY;
-            ChangeDisplaySettingsExW(dd.DeviceName, &mode, nullptr, 0, nullptr);
-            return;
+      if (!(dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)) continue;
+      DEVMODEW best{};
+      bool found = false;
+      DEVMODEW mode{};
+      mode.dmSize = sizeof(mode);
+      for (DWORD m = 0; EnumDisplaySettingsW(dd.DeviceName, m, &mode); ++m) {
+        if (mode.dmPelsWidth == pref_w && mode.dmPelsHeight == pref_h &&
+            mode.dmBitsPerPel == 32 && !(mode.dmDisplayFlags & DM_INTERLACED)) {
+          if (!found || mode.dmDisplayFrequency > best.dmDisplayFrequency) {
+            best = mode;
+            found = true;
           }
         }
-        return;
       }
-    }
-  }
-
-  static std::set<std::wstring> FindUsbmmiddDeviceNames() {
-    std::set<std::wstring> devices;
-    for (DWORD index = 0;; ++index) {
-      DISPLAY_DEVICEW dd{};
-      dd.cb = sizeof(dd);
-      if (!EnumDisplayDevicesW(nullptr, index, &dd, 0)) break;
-      if (std::wcsstr(dd.DeviceString, L"USB Mobile Monitor") != nullptr) {
-        devices.insert(dd.DeviceName);
+      if (found) {
+        best.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL |
+                        DM_DISPLAYFREQUENCY;
+        ChangeDisplaySettingsExW(dd.DeviceName, &best, nullptr, 0, nullptr);
       }
+      return;
     }
-    return devices;
-  }
-
-  static bool IsPathInDeviceSet(const DISPLAYCONFIG_PATH_INFO& path,
-                                const std::set<std::wstring>& devices) {
-    DISPLAYCONFIG_SOURCE_DEVICE_NAME source{};
-    source.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
-    source.header.size = sizeof(source);
-    source.header.adapterId = path.sourceInfo.adapterId;
-    source.header.id = path.sourceInfo.id;
-    if (DisplayConfigGetDeviceInfo(&source.header) != ERROR_SUCCESS) {
-      return false;
-    }
-    return devices.find(source.viewGdiDeviceName) != devices.end();
-  }
-
-  static bool FindAvailablePathForDevices(const std::set<std::wstring>& devices,
-                                          DISPLAYCONFIG_PATH_INFO* out_path) {
-    UINT32 path_count = 0;
-    UINT32 mode_count = 0;
-    if (GetDisplayConfigBufferSizes(QDC_ALL_PATHS, &path_count, &mode_count) !=
-            ERROR_SUCCESS ||
-        path_count == 0) {
-      return false;
-    }
-    std::vector<DISPLAYCONFIG_PATH_INFO> paths(path_count);
-    std::vector<DISPLAYCONFIG_MODE_INFO> modes(mode_count > 0 ? mode_count : 1);
-    if (QueryDisplayConfig(QDC_ALL_PATHS, &path_count, paths.data(),
-                           &mode_count, modes.data(), nullptr) !=
-        ERROR_SUCCESS) {
-      return false;
-    }
-    paths.resize(path_count);
-
-    for (const auto& path : paths) {
-      if (!path.targetInfo.targetAvailable) continue;
-      if (IsPathInDeviceSet(path, devices)) {
-        *out_path = path;
-        return true;
-      }
-    }
-    return false;
   }
 
   bool collapsed_ = false;

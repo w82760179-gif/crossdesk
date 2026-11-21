@@ -69,9 +69,19 @@ int PlatformMouseController::SendMouseCommand(RemoteAction remote_action,
       display_index >= static_cast<int>(display_info_list_.size()) ||
       display_info_list_[display_index].width <= 0 ||
       display_info_list_[display_index].height <= 0) {
-    LOG_WARN("Mouse command skipped, invalid display_index={}, displays={}",
-             display_index, display_info_list_.size());
-    return -1;
+    int fallback = -1;
+    for (int i = 0; i < static_cast<int>(display_info_list_.size()); ++i) {
+      if (display_info_list_[i].width > 0 && display_info_list_[i].height > 0) {
+        fallback = i;
+        break;
+      }
+    }
+    if (fallback < 0) {
+      LOG_WARN("Mouse command skipped, invalid display_index={}, displays={}",
+               display_index, display_info_list_.size());
+      return -1;
+    }
+    display_index = fallback;
   }
 
   const auto display = display_info_list_[display_index];
