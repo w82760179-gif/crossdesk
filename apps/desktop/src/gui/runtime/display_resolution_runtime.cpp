@@ -1,6 +1,9 @@
 #include "runtime/gui_runtime.h"
 
 #include <SDL3/SDL_timer.h>
+#ifdef _WIN32
+#include <SDL3/SDL_misc.h>
+#endif
 
 #include "rd_log.h"
 
@@ -161,9 +164,44 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
   next_display_resolution_poll_ = 0;
 }
 
+#ifdef _WIN32
+void GuiRuntime::QueueDisplayScalingSettings(const std::string& id,
+                                             PeerEventHandler* source) {
+  const auto events = ControllerEvents(id);
+  if (events.get() != source || !IsAuthorizedController(id)) return;
+  std::lock_guard lock(display_resolution_commands_mutex_);
+  if (display_scaling_commands_.empty())
+    display_scaling_commands_.push_back({id, events});
+}
+
+void GuiRuntime::HandleDisplayScalingSettings() {
+  std::deque<PendingDisplayScalingSettings> commands;
+  {
+    std::lock_guard lock(display_resolution_commands_mutex_);
+    commands.swap(display_scaling_commands_);
+  }
+  for (const auto& command : commands) {
+    const auto source = command.source.lock();
+    if (stopping_ || !source || !source->IsActive() ||
+        source != ControllerEvents(command.remote_id) ||
+        !IsAuthorizedController(command.remote_id)) continue;
+    RemoteAction reply{};
+    reply.type = ControlType::open_display_scaling_status;
+    reply.a = devices_.WindowsTabletDisplayReady() &&
+              IsCurrentSessionUserDesktopActive() &&
+              SDL_OpenURL("ms-settings:display");
+    LOG_INFO("Tablet display: Windows scaling settings opened={}", reply.a);
+    const auto message = reply.to_json();
+    SendControllerData(command.remote_id, message.data(), message.size(),
+                       control_data_label_.c_str());
+  }
+}
+#endif
+
 bool GuiRuntime::HandleDisplayResolutionChanges() {
   RestoreHostDisplayResolutions();
 #ifdef _WIN32
+  HandleDisplayScalingSettings();
   if (!stopping_ && !unattended_host_ && !ConnectedControllers().empty()) {
     if (!IsCurrentSessionUserDesktopActive()) return false;
     std::lock_guard lock(native_display_resolution_mutex);

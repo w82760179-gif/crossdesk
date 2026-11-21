@@ -36,6 +36,8 @@ enum ControlType {
   video_codec_status = 14,
   display_resolution = 15,
   display_resolution_status = 16,
+  open_display_scaling = 17,
+  open_display_scaling_status = 18,
 };
 
 enum MouseFlag {
@@ -144,6 +146,7 @@ struct HostInfo {
   bool supports_video_settings;
   bool supports_video_codec_status;
   bool supports_text_input;
+  bool supports_display_scaling_settings;
   bool supports_deskhub_preview;
   bool supports_deskhub_resolution;
   bool supports_deskhub_fps15;

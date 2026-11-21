@@ -330,6 +330,7 @@ final class NativeSession implements AutoCloseable {
         if (type == 2 && player != null) player.setEnabled(value != 0);
         execute(() -> { if (connected){nControl(handle, type, value);if(type==4)networkStatistics.resetVideo();} });
     }
+    void openDisplayScaling() { control(17, 0); }
     void lockPrivacy() { sendPrivacy(true); }
     void togglePrivacy() { sendPrivacy(false); }
     private void sendPrivacy(boolean lock) {

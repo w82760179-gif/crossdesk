@@ -448,6 +448,8 @@ extern "C" JNIEXPORT void JNICALL JNI_METHOD(nControl)(
     action.type = display_id; action.d = value;
   } else if (type == audio_capture) {
     action.type = audio_capture; action.a = value != 0;
+  } else if (type == open_display_scaling) {
+    action.type = open_display_scaling;
   } else return;
   s->Send(kControlStream, action.to_json());
 }

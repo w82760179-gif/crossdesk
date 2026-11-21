@@ -4716,6 +4716,11 @@ void GuiApplication::SyncServerWindow() {
   // Keep the panel alive throughout privacy transitions so remote
   // controllers can still see and operate it without resetting its UI state.
   bool show_controller_window = has_connected_controller;
+#ifdef _WIN32
+  // The panel would otherwise be captured, and its invisible hit area would
+  // still intercept tablet input if it were merely excluded from capture.
+  show_controller_window = show_controller_window && !devices_.WindowsTabletDisplayReady();
+#endif
 #if !defined(_WIN32) && !defined(__APPLE__) && !(defined(__linux__) && !defined(__OHOS__))
   // Preserve the existing panel behavior on other platforms.
   const auto privacy_status = privacy_.Snapshot();

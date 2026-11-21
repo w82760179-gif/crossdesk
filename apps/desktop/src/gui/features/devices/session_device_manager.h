@@ -71,6 +71,7 @@ public:
     requested_windows_display_ = display;
     return true;
   }
+  bool WindowsTabletDisplayReady() const { return tablet_desktop_ready_.load(); }
   bool OwnsNativeCursor() const;
   void SetNativeCursorPolicy(bool default_enabled, bool current_enabled);
   std::string SendServiceMouseCommand(int x, int y, int wheel, int flag);

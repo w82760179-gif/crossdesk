@@ -286,6 +286,13 @@ void PeerEventHandler::OnReceiveDataBuffer(
     return;
   }
 
+#ifdef _WIN32
+  if (remote_action.type == ControlType::open_display_scaling) {
+    if (source_id == runtime->control_data_label_)
+      runtime->QueueDisplayScalingSettings(remote_id, handler);
+    return;
+  }
+#endif
   if (remote_action.type == ControlType::display_resolution_status) {
     if (auto props = runtime->FindRemoteSession(remote_id);
         props && source_id == props->control_data_label_ && !props->closing_ &&

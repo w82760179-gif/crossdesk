@@ -15,6 +15,7 @@ final class SessionControls extends FrameLayout {
         default boolean textEdit(int deletions,String value){return false;}
         void videoSettings(int field,int value);
         default void displayResolution(RemoteDisplayResolutions.Mode mode) { }
+        default void openDisplayScaling() { }
         void sendFile(); void saveFile(); void secureAttention();
         default void togglePrivacy() { }
         default void fillScreen(boolean fill) { }
@@ -60,6 +61,12 @@ final class SessionControls extends FrameLayout {
     private TextView[] networkDetails;
     private View encryptionLock,encryptionOpen;
     private boolean muted,relative=true,orbPositioned,secureAttentionVisible;
+    private boolean displayScalingAvailable;
+    void setDisplayScalingAvailable(boolean available){
+        if(displayScalingAvailable==available)return;
+        displayScalingAvailable=available;
+        if(menu!=null&&menuPage.equals("video"))openMenu("video");
+    }
     SessionControls(Context context,MobileUi ui,Actions actions){
         super(context);this.ui=ui;this.actions=actions;
         keyboard=new RemoteKeyboard(context,ui,actions,()->{requestLayout();positionMouse();});
@@ -167,6 +174,11 @@ final class SessionControls extends FrameLayout {
             TextView resolutionTitle=ui.text(L10n.tr("被控端分辨率"),12,false);resolutionTitle.setTextColor(SECONDARY);body.addView(resolutionTitle);ui.gap(body,5);
             resolutionButton=ui.action("",INK,this::chooseResolution);resolutionButton.setTextSize(13);resolutionButton.setBackground(ui.background(0xFFF0F0F2,7));body.addView(resolutionButton,ui.size(-1,34));
             resolutionFeedback=ui.text("",12,false);resolutionFeedback.setTextColor(SECONDARY);resolutionFeedback.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);body.addView(resolutionFeedback);ui.gap(body,12);renderResolutions();
+            if(displayScalingAvailable){
+                TextView scale=ui.action("调整被控端缩放",INK,()->{closeMenu();actions.openDisplayScaling();});
+                scale.setTextSize(13);scale.setBackground(ui.background(0xFFF0F0F2,7));
+                body.addView(scale,ui.size(-1,34));ui.gap(body,12);
+            }
             settingRows.add(new SettingRow(body,0,L10n.tr("画面质量"),new String[]{L10n.tr("低"),L10n.tr("中"),L10n.tr("高")},new int[]{0,1,2}));ui.gap(body,12);
             settingRows.add(new SettingRow(body,1,L10n.tr("画面采集帧率"),new String[]{"30 fps","60 fps"},new int[]{30,60}));ui.gap(body,12);
             settingRows.add(new SettingRow(body,2,L10n.tr("画面偏好"),RemoteVideoSettings.preferences(),new int[]{0,1,2}));renderVideoSettings();

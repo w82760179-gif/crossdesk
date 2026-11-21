@@ -161,6 +161,10 @@ class GuiRuntime : protected gui_detail::GuiState {
                                     PeerEventHandler* source,
                                     const DisplayResolutionChange& change);
   bool HandleDisplayResolutionChanges();
+#ifdef _WIN32
+  void QueueDisplayScalingSettings(const std::string& id, PeerEventHandler* source);
+  void HandleDisplayScalingSettings();
+#endif
   void RestoreHostDisplayResolutions(bool force = false);
   bool ApplyHostDisplayResolution(const DisplayResolutionChange& change);
   void BeginDisplayResolutionStartup(const std::string& id, PeerEventHandler* source);
@@ -271,6 +275,13 @@ class GuiRuntime : protected gui_detail::GuiState {
   };
   std::mutex display_resolution_commands_mutex_;
   std::deque<PendingDisplayResolution> display_resolution_commands_;
+#ifdef _WIN32
+  struct PendingDisplayScalingSettings {
+    std::string remote_id;
+    std::weak_ptr<PeerEventHandler> source;
+  };
+  std::deque<PendingDisplayScalingSettings> display_scaling_commands_;
+#endif
   struct InitialDisplayResolutions {
     std::weak_ptr<PeerEventHandler> source;
     DisplayResolutionStartup state;

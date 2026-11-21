@@ -6,6 +6,7 @@ android {
     ndkVersion = '28.2.13676358'
     defaultConfig {
         applicationId = 'cn.crossdesk.mobile'
+        manifestPlaceholders = [crossdeskLabel: 'CrossDesk']
         minSdk = 26
         targetSdk = 36
         versionCode = providers.gradleProperty('crossdeskVersionCode').get().toInteger()
@@ -21,6 +22,10 @@ android {
     sourceSets.main.assets.srcDirs += [layout.buildDirectory.dir('generated/notices')]
     sourceSets.androidTest.java.srcDirs = ['../test/android/java']
     sourceSets.androidTest.assets.srcDirs = ['../test/android/assets']
+    buildTypes.debug {
+        applicationIdSuffix = '.tablet'
+        manifestPlaceholders = [crossdeskLabel: 'CrossDesk 平板测试']
+    }
     buildTypes.release { minifyEnabled = false }
     packaging.jniLibs.useLegacyPackaging = false
 }

@@ -96,6 +96,7 @@ void ResetHostInfo(HostInfo& info) {
   info.supports_video_settings = false;
   info.supports_video_codec_status = false;
   info.supports_text_input = false;
+  info.supports_display_scaling_settings = false;
   info.supports_deskhub_preview = false;
   info.supports_deskhub_resolution = false;
   info.supports_deskhub_fps15 = false;
@@ -291,6 +292,11 @@ std::string RemoteAction::ToJson(const RemoteAction& action) {
                                   {"request_id", action.vs.request_id},
                                   {"accepted", action.vs.accepted}};
       break;
+    case ControlType::open_display_scaling:
+      break;
+    case ControlType::open_display_scaling_status:
+      object["accepted"] = action.a;
+      break;
     case ControlType::audio_capture:
       object["audio_capture"] = action.a;
       break;
@@ -340,6 +346,7 @@ std::string RemoteAction::ToJson(const RemoteAction& action) {
           {"supports_video_settings", action.i.supports_video_settings},
           {"supports_video_codec_status", action.i.supports_video_codec_status},
           {"supports_text_input", action.i.supports_text_input},
+           {"supports_display_scaling_settings", action.i.supports_display_scaling_settings},
           {"supports_deskhub_preview", action.i.supports_deskhub_preview},
           {"supports_deskhub_resolution", action.i.supports_deskhub_resolution},
           {"supports_deskhub_fps15", action.i.supports_deskhub_fps15},
@@ -506,6 +513,11 @@ bool RemoteAction::FromJson(const std::string& json_string,
         output.vs.accepted = settings.value("accepted", false);
         break;
       }
+      case ControlType::open_display_scaling:
+        break;
+      case ControlType::open_display_scaling_status:
+        output.a = object.at("accepted").get<bool>();
+        break;
       case ControlType::audio_capture:
         output.a = object.at("audio_capture").get<bool>();
         break;
@@ -590,7 +602,9 @@ bool RemoteAction::FromJson(const std::string& json_string,
         output.i.supports_privacy_screen =
             privacy_support != host_info_object.end() &&
             privacy_support->is_boolean() && privacy_support->get<bool>();
-        output.i.supports_text_input =
+         output.i.supports_display_scaling_settings =
+             host_info_object.value("supports_display_scaling_settings", false);
+         output.i.supports_text_input =
             host_info_object.value("supports_text_input", false);
         output.i.supports_video_settings =
             host_info_object.value("supports_video_settings", false);

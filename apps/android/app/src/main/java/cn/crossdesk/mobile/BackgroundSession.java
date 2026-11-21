@@ -20,7 +20,7 @@ final class BackgroundSession implements NativeSession.Listener {
     RemoteDisplayResolutions displayResolutions=new RemoteDisplayResolutions();
     int signalState, selectedDisplay, width, height;
     boolean muted, remoteServiceAvailable, background, ended;
-    boolean autoLandscape;
+    boolean autoLandscape, displayScalingAvailable;
     File receivedFile;
 
     BackgroundSession(Context context, NativeSession session, String host, int port, String remote) {
@@ -66,6 +66,7 @@ final class BackgroundSession implements NativeSession.Listener {
         JSONObject info = message.optJSONObject("host_info");
         if (info != null) {
             platform = info.optString("platform", "");
+            displayScalingAvailable = info.optBoolean("supports_display_scaling_settings", false);
             JSONArray values = info.optJSONArray("displays"); if (values != null) displays = values;
             if (videoSettings != null) videoSettings.setSupported(info.optBoolean("supports_video_settings", false));
         }

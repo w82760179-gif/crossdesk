@@ -677,6 +677,9 @@ std::string GuiRuntime::BuildHostInformation(bool advertise_trust,
   action.i.supports_video_settings = true;
   action.i.supports_video_codec_status = true;
   action.i.supports_text_input = devices_.SupportsTextInput();
+#ifdef _WIN32
+  action.i.supports_display_scaling_settings = !unattended_host_;
+#endif
   action.i.supports_deskhub_preview = true;
   action.i.supports_deskhub_resolution = true;
   action.i.supports_deskhub_fps15 = true;
