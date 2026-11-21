@@ -161,18 +161,18 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
   next_display_resolution_poll_ = 0;
 }
 
-void GuiRuntime::HandleDisplayResolutionChanges() {
+bool GuiRuntime::HandleDisplayResolutionChanges() {
   RestoreHostDisplayResolutions();
 #ifdef _WIN32
-  if (!stopping_ && !unattended_host_ && !ConnectedControllers().empty() &&
-      IsCurrentSessionUserDesktopActive()) {
+  if (!stopping_ && !unattended_host_ && !ConnectedControllers().empty()) {
+    if (!IsCurrentSessionUserDesktopActive()) return false;
     std::lock_guard lock(native_display_resolution_mutex);
-    const auto result = windows_single_display_guard.Update();
-    if (result != WindowsSingleDisplayGuard::Result::unchanged) {
-      devices_.SetWindowsSessionDisplay(windows_single_display_guard.capture_display());
+    if (!windows_single_display_guard.Update()) return false;
+    if (devices_.SetWindowsSessionDisplay(windows_single_display_guard.capture_display())) {
       selected_display_ = 0;
       last_display_resolutions_.clear();
-      next_display_resolution_poll_ = 0;
+      // The device manager reinitializes the capture list after this tick.
+      next_display_resolution_poll_ = SDL_GetTicks() + 100;
     }
   }
 #endif
@@ -246,10 +246,13 @@ void GuiRuntime::HandleDisplayResolutionChanges() {
     RemoteAction reply;
     reply.type = ControlType::display_resolution_status;
     reply.resolution_change = command.change;
-    reply.resolution_change.accepted = ApplyHostDisplayResolution(command.change);
 #ifdef _WIN32
-    if (reply.resolution_change.accepted) windows_single_display_guard.AllowManualMode();
+    const bool allow_mode_change = windows_single_display_guard.capture_display().empty();
+#else
+    const bool allow_mode_change = true;
 #endif
+    reply.resolution_change.accepted = allow_mode_change &&
+        ApplyHostDisplayResolution(command.change);
     reply.display_resolutions = QueryHostDisplayResolutions();
     const auto message = reply.to_json();
     SendControllerData(command.remote_id, message.data(), message.size(),
@@ -261,14 +264,14 @@ void GuiRuntime::HandleDisplayResolutionChanges() {
   RestoreHostDisplayResolutions();
   const auto now = SDL_GetTicks();
   if (now < next_display_resolution_poll_)
-    return;
+    return true;
   next_display_resolution_poll_ = now + 2000;
   const auto controllers = ConnectedControllers();
   if (controllers.empty())
-    return;
+    return true;
   auto current = QueryHostDisplayResolutions();
   if (current == last_display_resolutions_)
-    return;
+    return true;
   last_display_resolutions_ = std::move(current);
   // Re-advertise after local changes/hotplug as well as remote requests. The
   // optional host-info extension is harmless to pre-feature controllers.
@@ -278,6 +281,7 @@ void GuiRuntime::HandleDisplayResolutionChanges() {
       SendControllerData(id, message.data(), message.size(),
                          control_data_label_.c_str());
   }
+  return true;
 }
 
 } // namespace crossdesk

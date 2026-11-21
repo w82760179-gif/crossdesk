@@ -160,7 +160,7 @@ class GuiRuntime : protected gui_detail::GuiState {
   void QueueDisplayResolutionChange(const std::string& id,
                                     PeerEventHandler* source,
                                     const DisplayResolutionChange& change);
-  void HandleDisplayResolutionChanges();
+  bool HandleDisplayResolutionChanges();
   void RestoreHostDisplayResolutions(bool force = false);
   bool ApplyHostDisplayResolution(const DisplayResolutionChange& change);
   void BeginDisplayResolutionStartup(const std::string& id, PeerEventHandler* source);

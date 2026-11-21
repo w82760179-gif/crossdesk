@@ -197,6 +197,9 @@ int SessionDeviceManager::InitializeScreenCapturer() {
       fps, [this, fps](unsigned char *data, int size, int width, int height,
                        const char *display_name,
                        const MiniRtcNativeVideoFrame *native_frame) {
+#ifdef _WIN32
+        if (!owner_.unattended_host_ && !tablet_desktop_ready_.load()) return;
+#endif
         const auto now_time = std::chrono::steady_clock::now();
         bool from_secure_desktop = false;
 #ifdef _WIN32
@@ -722,12 +725,19 @@ void SessionDeviceManager::PushAudio(const std::string& remote_id,
 void SessionDeviceManager::UpdateInteractions() {
   // Restore the previous session's modes and apply the new controller's saved
   // selections before starting capture or allowing an early input return.
-  owner_.HandleDisplayResolutionChanges();
+  const bool desktop_ready = owner_.HandleDisplayResolutionChanges();
 #ifdef _WIN32
-  if (requested_windows_display_ != initialized_windows_display_) {
+  if (!desktop_ready || requested_windows_display_ != initialized_windows_display_) {
+    tablet_desktop_ready_.store(false);
     if (owner_.screen_capturer_is_started_) StopScreenCapturer();
-    if (screen_capturer_) InitializeScreenCapturer();
   }
+  if (desktop_ready && requested_windows_display_ != initialized_windows_display_ &&
+      screen_capturer_) {
+    InitializeScreenCapturer();
+  }
+  tablet_desktop_ready_.store(
+      desktop_ready && screen_capturer_ && !requested_windows_display_.empty() &&
+      requested_windows_display_ == initialized_windows_display_);
 #endif
   // Release even when pending remote-input cleanup makes this tick return early.
   UpdateScreenSharingPower();
@@ -756,10 +766,15 @@ void SessionDeviceManager::UpdateInteractions() {
 
   if (owner_.start_screen_capturer_ && !owner_.screen_capturer_is_started_) {
     const auto now = std::chrono::steady_clock::now();
-    if (now >= next_capture_start_retry_ &&
+    if (desktop_ready && now >= next_capture_start_retry_ &&
         owner_.DisplayResolutionsReadyForCapture()) {
       next_capture_start_retry_ = now + std::chrono::seconds(1);
       if (StartScreenCapturer() == 0) {
+#ifdef _WIN32
+        tablet_desktop_ready_.store(
+            !requested_windows_display_.empty() &&
+            requested_windows_display_ == initialized_windows_display_);
+#endif
         owner_.screen_capturer_is_started_ = true;
         next_capture_start_retry_ = {};
       }
@@ -774,7 +789,7 @@ void SessionDeviceManager::UpdateInteractions() {
   UpdateScreenSharingPower();
 
   if (owner_.start_mouse_controller_ && !owner_.mouse_controller_is_started_) {
-    if (StartMouseController() == 0) {
+    if (desktop_ready && StartMouseController() == 0) {
       owner_.mouse_controller_is_started_ = true;
     }
   } else if (!owner_.start_mouse_controller_ &&
@@ -857,18 +872,28 @@ bool SessionDeviceManager::SupportsTextInput() const {
 }
 
 bool SessionDeviceManager::SendTextCommand(const std::string& text) {
+#ifdef _WIN32
+  if (!owner_.unattended_host_ && !tablet_desktop_ready_.load()) return false;
+#endif
   return keyboard_capturer_ && keyboard_capturer_->SendTextCommand(text) == 0;
 }
 
 bool SessionDeviceManager::SendKeyboardCommand(int key_code, bool is_down,
                                                uint32_t scan_code,
                                                bool extended) {
+#ifdef _WIN32
+  // Key-up still has to release an earlier remote key after topology loss.
+  if (is_down && !owner_.unattended_host_ && !tablet_desktop_ready_.load()) return false;
+#endif
   return keyboard_capturer_ && keyboard_capturer_->SendKeyboardCommand(
                                    key_code, is_down, scan_code, extended) == 0;
 }
 
 bool SessionDeviceManager::SendMouseCommand(const RemoteAction &action,
                                             int selected_display) {
+#ifdef _WIN32
+  if (!owner_.unattended_host_ && !tablet_desktop_ready_.load()) return false;
+#endif
   std::lock_guard lock(mouse_controller_mutex_);
   if (mouse_controller_) {
     return mouse_controller_->SendMouseCommand(action, selected_display) == 0;

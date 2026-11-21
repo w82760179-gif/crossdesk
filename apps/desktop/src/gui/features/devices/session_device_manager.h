@@ -66,8 +66,10 @@ public:
     return remote_mouse_buttons_.Apply(remote_id, flag, std::move(send));
   }
 #ifdef _WIN32
-  void SetWindowsSessionDisplay(const std::string& display) {
+  bool SetWindowsSessionDisplay(const std::string& display) {
+    if (requested_windows_display_ == display) return false;
     requested_windows_display_ = display;
+    return true;
   }
   bool OwnsNativeCursor() const;
   void SetNativeCursorPolicy(bool default_enabled, bool current_enabled);
@@ -128,6 +130,7 @@ private:
   ScreenCapturerFactory *screen_capturer_factory_ = nullptr;
   ScreenCapturer *screen_capturer_ = nullptr;
 #ifdef _WIN32
+  std::atomic<bool> tablet_desktop_ready_{false};
   std::string requested_windows_display_;
   std::string initialized_windows_display_;
 #endif
