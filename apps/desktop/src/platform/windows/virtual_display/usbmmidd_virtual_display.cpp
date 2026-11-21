@@ -489,9 +489,10 @@ std::wstring FindUsbmmiddDisplayDeviceName() {
   return {};
 }
 
-bool IsUsbmmiddDisplayDevice(const std::wstring& device_name) {
+bool IsUsbmmiddDisplayDevice(const std::wstring& device_name,
+                             bool require_attached) {
   for (const auto& adapter : EnumerateUsbmmiddAdapters()) {
-    if (adapter.attached_to_desktop &&
+    if ((!require_attached || adapter.attached_to_desktop) &&
         _wcsicmp(adapter.device_name.c_str(), device_name.c_str()) == 0)
       return true;
   }

@@ -123,7 +123,7 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
   handled_display_resolution_epoch_ = epoch;
 #ifdef _WIN32
   if (display_resolution_restoration_.Empty() &&
-      !windows_single_display_guard.Collapsed())
+      !windows_single_display_guard.Tracked())
     return;
 #else
   if (display_resolution_restoration_.Empty())
@@ -149,11 +149,13 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
       LOG_WARN("Could not restore every display mode; will retry while idle");
   }
 #ifdef _WIN32
-  if (windows_single_display_guard.Collapsed()) {
-    if (windows_single_display_guard.Restore())
+  if (windows_single_display_guard.Tracked()) {
+    if (windows_single_display_guard.Restore()) {
+      devices_.SetWindowsSessionDisplay({});
       LOG_INFO("Restored original multi-display topology after remote control");
-    else if (disconnected || force)
-      LOG_WARN("Could not restore multi-display topology; will retry while idle");
+    } else if (disconnected || force) {
+      LOG_WARN("Display topology restoration pending");
+    }
   }
 #endif
   next_display_resolution_poll_ = 0;
@@ -162,26 +164,12 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
 void GuiRuntime::HandleDisplayResolutionChanges() {
   RestoreHostDisplayResolutions();
 #ifdef _WIN32
-  if (!stopping_ && !ConnectedControllers().empty() &&
+  if (!stopping_ && !unattended_host_ && !ConnectedControllers().empty() &&
       IsCurrentSessionUserDesktopActive()) {
-    bool collapsed_now = false;
-    {
-      std::lock_guard lock(native_display_resolution_mutex);
-      if (!windows_single_display_guard.Collapsed()) {
-        collapsed_now = windows_single_display_guard.CollapseIfMultiDisplay();
-      }
-    }
-    if (collapsed_now) {
-      LOG_INFO("Collapsed multi-display topology to single display for remote session");
-      // Recreate capturer cleanly so the newly activated virtual/single display
-      // becomes slot 0 with fresh resolution enumeration (no stale dead slots).
-      if (screen_capturer_is_started_) {
-        devices_.StopScreenCapturer();
-        devices_.InitializeScreenCapturer();
-        if (devices_.StartScreenCapturer() == 0) {
-          screen_capturer_is_started_ = true;
-        }
-      }
+    std::lock_guard lock(native_display_resolution_mutex);
+    const auto result = windows_single_display_guard.Update();
+    if (result != WindowsSingleDisplayGuard::Result::unchanged) {
+      devices_.SetWindowsSessionDisplay(windows_single_display_guard.capture_display());
       selected_display_ = 0;
       last_display_resolutions_.clear();
       next_display_resolution_poll_ = 0;
@@ -212,6 +200,9 @@ void GuiRuntime::HandleDisplayResolutionChanges() {
     // early preferences pending until admission has actually been committed.
     if (!active()) continue;
     for (const auto &preference : startup.state.preferences) {
+#ifdef _WIN32
+      if (!windows_single_display_guard.capture_display().empty()) break;
+#endif
       RestoreHostDisplayResolutions();
       if (!active()) break;
       const auto available = QueryHostDisplayResolutions();
@@ -256,6 +247,9 @@ void GuiRuntime::HandleDisplayResolutionChanges() {
     reply.type = ControlType::display_resolution_status;
     reply.resolution_change = command.change;
     reply.resolution_change.accepted = ApplyHostDisplayResolution(command.change);
+#ifdef _WIN32
+    if (reply.resolution_change.accepted) windows_single_display_guard.AllowManualMode();
+#endif
     reply.display_resolutions = QueryHostDisplayResolutions();
     const auto message = reply.to_json();
     SendControllerData(command.remote_id, message.data(), message.size(),

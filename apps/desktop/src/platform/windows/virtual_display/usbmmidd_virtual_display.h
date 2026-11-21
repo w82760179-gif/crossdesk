@@ -55,7 +55,8 @@ bool RestoreAttachedPhysicalDisplayModes(std::string* error = nullptr);
 int CountUsbmmiddMonitors();
 // GDI device name of an attached usbmmidd output, or empty while settling.
 std::wstring FindUsbmmiddDisplayDeviceName();
-bool IsUsbmmiddDisplayDevice(const std::wstring& device_name);
+bool IsUsbmmiddDisplayDevice(const std::wstring& device_name,
+                             bool require_attached = true);
 // Root-enumerated device node present, plugged or not.
 bool IsUsbmmiddDriverInstalled();
 

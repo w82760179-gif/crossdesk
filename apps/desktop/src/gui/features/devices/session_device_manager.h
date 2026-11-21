@@ -66,6 +66,9 @@ public:
     return remote_mouse_buttons_.Apply(remote_id, flag, std::move(send));
   }
 #ifdef _WIN32
+  void SetWindowsSessionDisplay(const std::string& display) {
+    requested_windows_display_ = display;
+  }
   bool OwnsNativeCursor() const;
   void SetNativeCursorPolicy(bool default_enabled, bool current_enabled);
   std::string SendServiceMouseCommand(int x, int y, int wheel, int flag);
@@ -124,6 +127,10 @@ private:
   std::chrono::steady_clock::time_point next_audio_output_retry_{};
   ScreenCapturerFactory *screen_capturer_factory_ = nullptr;
   ScreenCapturer *screen_capturer_ = nullptr;
+#ifdef _WIN32
+  std::string requested_windows_display_;
+  std::string initialized_windows_display_;
+#endif
   ScreenSharingPower screen_sharing_power_;
   std::atomic<bool> cursor_capture_dirty_{true};
   SpeakerCaptureController speaker_capture_;

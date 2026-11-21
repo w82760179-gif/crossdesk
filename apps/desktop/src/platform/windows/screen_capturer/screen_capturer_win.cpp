@@ -451,6 +451,14 @@ bool ScreenCapturerWin::PrepareUnattendedDisplay() {
   return !name.empty();
 }
 
+bool ScreenCapturerWin::PrepareSessionDisplay() {
+  if (session_display_.empty()) return PrepareUnattendedDisplay();
+  std::lock_guard lock(alias_mutex_);
+  replacement_display_name_ = session_display_;
+  replacement_display_slot_ = 0;
+  return true;
+}
+
 void ScreenCapturerWin::NotifyPrivacyCapture(bool running) {
   if (privacy_)
     privacy_->CaptureChanged(running);
@@ -561,7 +569,7 @@ int ScreenCapturerWin::Init(const int fps, cb_desktop_data cb) {
   };
 
   JoinVirtualDisplayThread();
-  const bool prepared_display = PrepareUnattendedDisplay();
+  const bool prepared_display = PrepareSessionDisplay();
   impl_.reset();
   const bool headless = DetectHeadlessDesktop();
   int ret = -1;
@@ -804,7 +812,7 @@ int ScreenCapturerWin::Start(bool show_cursor) {
   // the backend for the desktop as it is now, not as it was at Init.
   JoinVirtualDisplayThread();
   // Reconcile the live target, not the display name cached at process startup.
-  if (!PrepareUnattendedDisplay()) {
+  if (!PrepareSessionDisplay()) {
     std::lock_guard<std::mutex> lock(alias_mutex_);
     replacement_display_name_.clear();
     replacement_display_slot_ = -1;
@@ -982,7 +990,8 @@ int ScreenCapturerWin::SwitchTo(int monitor_index) {
 }
 
 int ScreenCapturerWin::ResetToInitialMonitor() {
-  if (unattended_host_ && virtual_display_.active()) return SwitchTo(0);
+  if (!session_display_.empty() ||
+      (unattended_host_ && virtual_display_.active())) return SwitchTo(0);
   std::lock_guard<std::mutex> lock(impl_mutex_);
   if (!impl_) return -1;
   const int ret = impl_->ResetToInitialMonitor();
@@ -1152,6 +1161,8 @@ bool ScreenCapturerWin::RestartCaptureBackendAfterSecureDesktop() {
 }
 
 void ScreenCapturerWin::CheckDisplayPresence(ULONGLONG now) {
+  // The GUI owns this explicit target and restores the topology if it is lost.
+  if (!session_display_.empty()) return;
   // Topology events accelerate the next probe, but driver rebuild callbacks
   // must not flood QueryDisplayConfig. Polling also covers WGC/GDI and unplug
   // events that NVIDIA does not expose as a changed DXGI output.

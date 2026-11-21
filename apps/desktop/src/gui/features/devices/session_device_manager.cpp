@@ -174,6 +174,8 @@ int SessionDeviceManager::InitializeScreenCapturer() {
 #ifdef _WIN32
   if (auto windows = dynamic_cast<ScreenCapturerWin*>(screen_capturer_)) {
     windows->SetUnattendedHost(owner_.unattended_host_);
+    initialized_windows_display_ = requested_windows_display_;
+    windows->SetSessionDisplay(initialized_windows_display_);
     windows->SetNativeCursorPolicy(owner_.host_cursor_default_, owner_.host_cursor_preference_);
   }
 #endif
@@ -472,8 +474,12 @@ bool SessionDeviceManager::SyncDisplayInfo() {
 }
 
 void SessionDeviceManager::SetDisplayInfoList(std::vector<DisplayInfo> displays) {
-  std::lock_guard<std::mutex> lock(display_info_mutex_);
-  display_info_list_ = std::move(displays);
+  {
+    std::lock_guard lock(display_info_mutex_);
+    display_info_list_ = displays;
+  }
+  std::lock_guard lock(mouse_controller_mutex_);
+  if (mouse_controller_) mouse_controller_->UpdateDisplayInfoList(displays);
 }
 
 int SessionDeviceManager::StartMouseController() {
@@ -717,6 +723,12 @@ void SessionDeviceManager::UpdateInteractions() {
   // Restore the previous session's modes and apply the new controller's saved
   // selections before starting capture or allowing an early input return.
   owner_.HandleDisplayResolutionChanges();
+#ifdef _WIN32
+  if (requested_windows_display_ != initialized_windows_display_) {
+    if (owner_.screen_capturer_is_started_) StopScreenCapturer();
+    if (screen_capturer_) InitializeScreenCapturer();
+  }
+#endif
   // Release even when pending remote-input cleanup makes this tick return early.
   UpdateScreenSharingPower();
 #ifdef _WIN32

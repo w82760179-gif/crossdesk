@@ -63,6 +63,7 @@ class ScreenCapturerWin : public ScreenCapturer {
   void SetPrivacyController(PrivacyController* privacy) override { privacy_ = privacy; }
   // Set before Init(), while capture is stopped.
   void SetUnattendedHost(bool enabled) { unattended_host_ = enabled; }
+  void SetSessionDisplay(std::string display) { session_display_ = display; }
   // Query synchronously inside the frame callback, on the delivering thread.
   // This describes the actual frame, independently of service status polling.
   static bool CurrentFrameIsFromSecureDesktop();
@@ -74,7 +75,9 @@ class ScreenCapturerWin : public ScreenCapturer {
   // Lock order: impl_mutex_ before alias_mutex_; never the reverse.
   std::mutex impl_mutex_;
   bool unattended_host_ = false;
+  std::string session_display_;
   bool PrepareUnattendedDisplay();
+  bool PrepareSessionDisplay();
   void UpdateNativeCursor(ScreenCapturer* backend);
   void ReleaseNativeCursor();
   std::unique_ptr<PrivacyCursorGuard> native_cursor_guard_;
