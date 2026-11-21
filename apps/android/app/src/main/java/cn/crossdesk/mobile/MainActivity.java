@@ -75,7 +75,6 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     private RemoteOrientation remoteOrientation;
     private SessionControls controls;
     private Dialog passwordDialog, progressDialog, privacyDialog;
-    private AlertDialog disconnectDialog;
     private AlertDialog connectionDialog;
     private String pendingConnectionMessage="";
     private AlertDialog remoteUpdateDialog;
@@ -382,7 +381,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             });
         }
         controls=new SessionControls(this,ui,new SessionControls.Actions(){
-            public void disconnect(){confirmDisconnect();}public void display(){selectDisplay();}public void clipboard(){MainActivity.this.clipboard();}
+            public void disconnect(){end("");}public void display(){selectDisplay();}public void clipboard(){MainActivity.this.clipboard();}
             public void sendFile(){chooseFile();}public void saveFile(){saveReceivedFile();}public void secureAttention(){MainActivity.this.secureAttention();}
             public void togglePrivacy(){if(ready&&session!=null)session.togglePrivacy();}
             public void fillScreen(boolean fill){preferences.edit().putBoolean("fillScreen",fill).apply();if(video!=null)video.setFillScreen(fill);if(controls!=null)controls.setFillScreen(fill);}
@@ -406,7 +405,6 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         });
         pictureInPicture.connected();updatePictureInPicture();
     }
-    private void confirmDisconnect(){disconnectDialog=new AlertDialog.Builder(this).setTitle(L10n.tr("断开远程连接？")).setMessage(L10n.tr("断开后将返回首页")).setNegativeButton(L10n.tr("取消"),null).setPositiveButton(L10n.tr("断开连接"),(d,w)->end("")).show();}
     private void end(String reason){
         dismissPrivacyUnlockDialog();
         remoteOrientation.end();
@@ -843,7 +841,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     }
     private void releaseKeys(){if(session!=null)for(int code:pressed)session.key(code,false);pressed.clear();}
     private void navigateBack(){if(backAction==null)return;navigatingBack=true;try{backAction.run();}finally{navigatingBack=false;}}
-    private void back(){if(controls!=null&&controls.closeKeyboard())return;pageHost.finish();if(session!=null){if(ready)confirmDisconnect();else end("");}else if(backAction!=null)navigateBack();else finish();}
+    private void back(){if(controls!=null&&controls.closeKeyboard())return;pageHost.finish();if(session!=null)end("");else if(backAction!=null)navigateBack();else finish();}
     @Override public void onWindowFocusChanged(boolean focus){super.onWindowFocusChanged(focus);if(!focus){releaseKeys();if(video!=null)video.releasePointerCaptureSafe();}else applySystemBars(page.equals("session"));}
     // API 26–32 use this callback; API 33+ registers OnBackInvokedCallback in onCreate.
     @SuppressWarnings("deprecation")
@@ -936,7 +934,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     }
     private void setPictureInPictureUi(boolean value){
         pictureInPictureUi=value;
-        if(value){releaseKeys();hideKeyboard();pageHost.finish();if(disconnectDialog!=null)disconnectDialog.dismiss();if(remoteUpdateDialog!=null)remoteUpdateDialog.dismiss();}
+        if(value){releaseKeys();hideKeyboard();pageHost.finish();if(remoteUpdateDialog!=null)remoteUpdateDialog.dismiss();}
         if(controls!=null)controls.setPictureInPicture(value);
         if(video!=null)video.setPictureInPicture(value);
         if(safeArea!=null)safeArea.requestApplyInsets();
@@ -970,10 +968,10 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             cancelDisplayResolutionTimeout();if(displayResolutions.pending)displayResolutions.expire(displayResolutions.requested.id);
             finishVirtualScaleRequest();
             cancelVideoSettingsTimeout();if(videoSettings.pending)videoSettings.expire(videoSettings.requestId);
-            resetRemoteVersionCheck();if(disconnectDialog!=null)disconnectDialog.dismiss();
+            resetRemoteVersionCheck();
         }else if(documentSession==null||documentSession!=session||isFinishing()){if(session!=null)end(isFinishing()?"":L10n.tr("远程窗口已关闭，或后台保活未能启动，会话已结束"));stopSignaling();}
         super.onStop();}
-    @Override protected void onDestroy(){dismissPrivacyUnlockDialog();mainHandler.removeCallbacks(documentTimeout);documentSession=null;documentToSave=null;appUpdates.setEnabled(false);pageHost.finish();resetRemoteVersionCheck();cancelVideoSettingsTimeout();cancelDisplayResolutionTimeout();previews.removeListener(previewChanged);if(privacyDialog!=null)privacyDialog.dismiss();if(previewDialog!=null)previewDialog.dismiss();announcementInbox.close();if(disconnectDialog!=null)disconnectDialog.dismiss();if(passwordDialog!=null)passwordDialog.dismiss();if(progressDialog!=null)progressDialog.dismiss();
+    @Override protected void onDestroy(){dismissPrivacyUnlockDialog();mainHandler.removeCallbacks(documentTimeout);documentSession=null;documentToSave=null;appUpdates.setEnabled(false);pageHost.finish();resetRemoteVersionCheck();cancelVideoSettingsTimeout();cancelDisplayResolutionTimeout();previews.removeListener(previewChanged);if(privacyDialog!=null)privacyDialog.dismiss();if(previewDialog!=null)previewDialog.dismiss();announcementInbox.close();if(passwordDialog!=null)passwordDialog.dismiss();if(progressDialog!=null)progressDialog.dismiss();
         finishVirtualScaleRequest();
         if(connectionDialog!=null)connectionDialog.dismiss();
         boolean retained=!isFinishing()&&backgroundSession!=null&&!backgroundSession.ended&&RemoteSessionService.current()==backgroundSession;

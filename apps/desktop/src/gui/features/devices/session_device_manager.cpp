@@ -21,6 +21,7 @@
 #include "speaker_capturer_factory.h"
 #ifdef _WIN32
 #include <nlohmann/json.hpp>
+#include "interactive_desktop.h"
 #include "platform/windows/screen_capturer/screen_capturer_win.h"
 #include "service_host.h"
 #endif
@@ -197,16 +198,16 @@ int SessionDeviceManager::InitializeScreenCapturer() {
       fps, [this, fps](unsigned char *data, int size, int width, int height,
                        const char *display_name,
                        const MiniRtcNativeVideoFrame *native_frame) {
-#ifdef _WIN32
-        if (!owner_.unattended_host_ && !tablet_desktop_ready_.load()) return;
-#endif
-        const auto now_time = std::chrono::steady_clock::now();
         bool from_secure_desktop = false;
 #ifdef _WIN32
-        owner_.host_capture_tick_ = SDL_GetTicks();
         from_secure_desktop =
             ScreenCapturerWin::CurrentFrameIsFromSecureDesktop();
+        if (!owner_.unattended_host_ &&
+            !(from_secure_desktop ? tablet_secure_capture_.load()
+                                  : tablet_desktop_ready_.load())) return;
+        owner_.host_capture_tick_ = SDL_GetTicks();
 #endif
+        const auto now_time = std::chrono::steady_clock::now();
         const uint64_t capture_generation =
             RecordCaptureCadence(now_time, fps, from_secure_desktop);
         if (!ShouldSendCapturedFrame(now_time, fps)) {
@@ -268,7 +269,8 @@ int SessionDeviceManager::InitializeScreenCapturer() {
         for (const std::string &remote_id : connected_remote_ids) {
           if (owner_.managed_host_frontend_ && remote_id.rfind("lan/", 0) != 0) continue;
           // Warm/shared capture may already be running for another controller.
-          if (!owner_.DisplayResolutionsReadyForCapture(remote_id)) continue;
+          if (!from_secure_desktop &&
+              !owner_.DisplayResolutionsReadyForCapture(remote_id)) continue;
           if (!owner_.preview_subscriptions_.ShouldSend(remote_id, now_time,
                                                         stream_id)) continue;
           if (owner_.WithController(
@@ -726,9 +728,18 @@ void SessionDeviceManager::UpdateInteractions() {
   // Restore the previous session's modes and apply the new controller's saved
   // selections before starting capture or allowing an early input return.
   const bool desktop_ready = owner_.HandleDisplayResolutionChanges();
+  bool secure_capture = false;
 #ifdef _WIN32
-  if (!desktop_ready || requested_windows_display_ != initialized_windows_display_) {
+  // Only the service's secure frames may flow while the user desktop is
+  // locked. After unlock, wait for the virtual output before normal video.
+  secure_capture = !desktop_ready && !owner_.unattended_host_ &&
+                   owner_.start_screen_capturer_ && HasConnectedController() &&
+                   !IsCurrentSessionUserDesktopActive();
+  tablet_secure_capture_.store(secure_capture);
+  if (!desktop_ready || requested_windows_display_ != initialized_windows_display_)
     tablet_desktop_ready_.store(false);
+  if ((!desktop_ready && !secure_capture) ||
+      requested_windows_display_ != initialized_windows_display_) {
     if (owner_.screen_capturer_is_started_) StopScreenCapturer();
   }
   if (desktop_ready && requested_windows_display_ != initialized_windows_display_ &&
@@ -766,13 +777,13 @@ void SessionDeviceManager::UpdateInteractions() {
 
   if (owner_.start_screen_capturer_ && !owner_.screen_capturer_is_started_) {
     const auto now = std::chrono::steady_clock::now();
-    if (desktop_ready && now >= next_capture_start_retry_ &&
-        owner_.DisplayResolutionsReadyForCapture()) {
+    if (now >= next_capture_start_retry_ &&
+        (secure_capture || (desktop_ready && owner_.DisplayResolutionsReadyForCapture()))) {
       next_capture_start_retry_ = now + std::chrono::seconds(1);
       if (StartScreenCapturer() == 0) {
 #ifdef _WIN32
         tablet_desktop_ready_.store(
-            !requested_windows_display_.empty() &&
+            desktop_ready && !requested_windows_display_.empty() &&
             requested_windows_display_ == initialized_windows_display_);
 #endif
         owner_.screen_capturer_is_started_ = true;

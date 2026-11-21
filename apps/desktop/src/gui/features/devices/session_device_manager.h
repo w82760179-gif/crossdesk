@@ -132,6 +132,7 @@ private:
   ScreenCapturer *screen_capturer_ = nullptr;
 #ifdef _WIN32
   std::atomic<bool> tablet_desktop_ready_{false};
+  std::atomic<bool> tablet_secure_capture_{false};
   std::string requested_windows_display_;
   std::string initialized_windows_display_;
 #endif

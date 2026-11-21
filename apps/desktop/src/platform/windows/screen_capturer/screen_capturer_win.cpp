@@ -797,7 +797,9 @@ int ScreenCapturerWin::Start(bool show_cursor) {
 
   show_cursor_.store(show_cursor, std::memory_order_relaxed);
   applied_show_cursor_ = show_cursor;
-  ResetPostSecureDesktopState(!IsCurrentSessionUserDesktopActive());
+  const bool desktop_available = IsCurrentSessionUserDesktopActive();
+  ResetPostSecureDesktopState(!desktop_available);
+  const bool start_normal_backend = unattended_host_ || desktop_available;
   SharedCapturedCursorState().Reset();
   paused_.store(false, std::memory_order_relaxed);
   invalid_stream_id_logged_.store(false, std::memory_order_relaxed);
@@ -826,7 +828,9 @@ int ScreenCapturerWin::Start(bool show_cursor) {
   physical_display_since_ = 0;
   headless_recovery_.Reset();
   impl_->Destroy();
-  if (!StartPreferredBackend(requested_monitor)) {
+  // The secure desktop service supplies the lock screen. It can start even
+  // when the user desktop refuses to open a normal capture backend.
+  if (start_normal_backend && !StartPreferredBackend(requested_monitor)) {
     LOG_ERROR("Windows capturer: DXGI/WGC/GDI could not start");
     ReleaseNativeCursor();
     return -1;
@@ -834,7 +838,7 @@ int ScreenCapturerWin::Start(bool show_cursor) {
   applied_show_cursor_ = BackendCursorCapture(
       impl_.get(), show_cursor_.load(std::memory_order_relaxed));
   running_.store(true, std::memory_order_relaxed);
-  NotifyPrivacyCapture(true);
+  NotifyPrivacyCapture(start_normal_backend);
   if (!secure_capture_thread_.joinable()) {
     secure_capture_thread_ =
         std::thread([this]() { SecureDesktopCaptureLoop(); });
