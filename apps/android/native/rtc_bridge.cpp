@@ -448,9 +448,17 @@ extern "C" JNIEXPORT void JNICALL JNI_METHOD(nControl)(
     action.type = display_id; action.d = value;
   } else if (type == audio_capture) {
     action.type = audio_capture; action.a = value != 0;
-  } else if (type == open_display_scaling) {
-    action.type = open_display_scaling;
   } else return;
+  s->Send(kControlStream, action.to_json());
+}
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(nVirtualScale)(
+    JNIEnv*, jclass, jlong handle, jint percent, jint request_id) {
+  auto* s = From(handle);
+  if (!s || request_id <= 0) return;
+  RemoteAction action{};
+  action.type = virtual_display_scale;
+  action.virtual_scale.request_id = static_cast<uint32_t>(request_id);
+  action.virtual_scale.percent = percent;
   s->Send(kControlStream, action.to_json());
 }
 extern "C" JNIEXPORT jboolean JNICALL JNI_METHOD(nVideoSettings)(

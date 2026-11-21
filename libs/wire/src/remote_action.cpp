@@ -96,7 +96,7 @@ void ResetHostInfo(HostInfo& info) {
   info.supports_video_settings = false;
   info.supports_video_codec_status = false;
   info.supports_text_input = false;
-  info.supports_display_scaling_settings = false;
+  info.supports_virtual_display_scale = false;
   info.supports_deskhub_preview = false;
   info.supports_deskhub_resolution = false;
   info.supports_deskhub_fps15 = false;
@@ -297,6 +297,18 @@ std::string RemoteAction::ToJson(const RemoteAction& action) {
     case ControlType::open_display_scaling_status:
       object["accepted"] = action.a;
       break;
+    case ControlType::virtual_display_scale:
+    case ControlType::virtual_display_scale_status: {
+      const auto& scale = action.virtual_scale;
+      if (scale.request_id == 0) return {};
+      object["virtual_scale"] = {{"request_id", scale.request_id},
+                                 {"percent", scale.percent}};
+      if (action.type == ControlType::virtual_display_scale_status) {
+        object["virtual_scale"]["accepted"] = scale.accepted;
+        object["virtual_scale"]["options"] = scale.options;
+      }
+      break;
+    }
     case ControlType::audio_capture:
       object["audio_capture"] = action.a;
       break;
@@ -346,7 +358,7 @@ std::string RemoteAction::ToJson(const RemoteAction& action) {
           {"supports_video_settings", action.i.supports_video_settings},
           {"supports_video_codec_status", action.i.supports_video_codec_status},
           {"supports_text_input", action.i.supports_text_input},
-           {"supports_display_scaling_settings", action.i.supports_display_scaling_settings},
+           {"supports_virtual_display_scale", action.i.supports_virtual_display_scale},
           {"supports_deskhub_preview", action.i.supports_deskhub_preview},
           {"supports_deskhub_resolution", action.i.supports_deskhub_resolution},
           {"supports_deskhub_fps15", action.i.supports_deskhub_fps15},
@@ -518,6 +530,33 @@ bool RemoteAction::FromJson(const std::string& json_string,
       case ControlType::open_display_scaling_status:
         output.a = object.at("accepted").get<bool>();
         break;
+      case ControlType::virtual_display_scale:
+      case ControlType::virtual_display_scale_status: {
+        const auto& value = object.at("virtual_scale");
+        const auto& id = value.at("request_id");
+        const auto& percent = value.at("percent");
+        if (!id.is_number_integer() || !percent.is_number_integer()) return false;
+        const auto request = id.get<int64_t>();
+        const auto target = percent.get<int64_t>();
+        if (request <= 0 || request > UINT32_MAX ||
+            (target != 0 && (target < 100 || target > 500))) return false;
+        auto& scale = output.virtual_scale;
+        scale = {};
+        scale.request_id = static_cast<uint32_t>(request);
+        scale.percent = static_cast<int>(target);
+        if (output.type == ControlType::virtual_display_scale_status) {
+          scale.accepted = value.at("accepted").get<bool>();
+          const auto& options = value.at("options");
+          if (!options.is_array() || options.size() > 12) return false;
+          for (const auto& option : options) {
+            if (!option.is_number_integer()) return false;
+            const auto p = option.get<int64_t>();
+            if (p < 100 || p > 500) return false;
+            scale.options.push_back(static_cast<int>(p));
+          }
+        }
+        break;
+      }
       case ControlType::audio_capture:
         output.a = object.at("audio_capture").get<bool>();
         break;
@@ -602,8 +641,8 @@ bool RemoteAction::FromJson(const std::string& json_string,
         output.i.supports_privacy_screen =
             privacy_support != host_info_object.end() &&
             privacy_support->is_boolean() && privacy_support->get<bool>();
-         output.i.supports_display_scaling_settings =
-             host_info_object.value("supports_display_scaling_settings", false);
+         output.i.supports_virtual_display_scale =
+             host_info_object.value("supports_virtual_display_scale", false);
          output.i.supports_text_input =
             host_info_object.value("supports_text_input", false);
         output.i.supports_video_settings =

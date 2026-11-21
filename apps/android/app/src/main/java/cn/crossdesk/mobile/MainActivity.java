@@ -95,6 +95,10 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     private Runnable videoSettingsTimeout;
     private RemoteDisplayResolutions displayResolutions=new RemoteDisplayResolutions();
     private boolean displayScalingAvailable;
+    private static final java.util.concurrent.atomic.AtomicInteger virtualScaleSequence =
+        new java.util.concurrent.atomic.AtomicInteger();
+    private int virtualScalePending;
+    private Runnable virtualScaleTimeout;
     private Runnable displayResolutionTimeout;
     private final Set<Integer> pressed=new HashSet<>();
     private Runnable backAction;
@@ -390,7 +394,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             public void mute(){muted=!muted;if(session!=null)session.control(2,muted?0:1);controls.setMuted(muted);}
             public void mouse(){boolean relative=!preferences.getBoolean("relativeMouse",true);preferences.edit().putBoolean("relativeMouse",relative).apply();video.setRelative(relative);controls.setRelative(relative);}
             public void displayResolution(RemoteDisplayResolutions.Mode mode){updateDisplayResolution(mode);}
-            public void openDisplayScaling(){if(ready&&session!=null&&displayScalingAvailable)session.openDisplayScaling();}
+            public void virtualDisplayScale(int percent){requestVirtualDisplayScale(percent);}
             public void videoSettings(int field,int value){RemoteVideoSettings.Values old=MainActivity.this.videoSettings.selection;updateVideoSettings(new RemoteVideoSettings.Values(field==0?value:old.quality,field==1?value:old.frameRate,field==2?value:old.preference));}
         });controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);controls.setRelative(preferences.getBoolean("relativeMouse",true));controls.setFillScreen(fillScreen);controls.setCaptureMouse(captureMouse);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         controls.attachMouseBar(canvas,new VirtualMouseBar(ui,video.mouseInput));
@@ -411,6 +415,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         pictureInPicture.disconnect();updatePictureInPicture();
         if(controls!=null)controls.cancelMouseInput();if(video!=null)video.releaseMouse();
         mainHandler.removeCallbacks(documentTimeout);documentSession=null;documentToSave=null;receivedFile=null;remoteServiceAvailable=false;displayScalingAvailable=false;
+        finishVirtualScaleRequest();
         resetRemoteVersionCheck();
         resetVideoSettings();
         previewCapture=null;previewCopying=false;
@@ -704,6 +709,28 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         remoteVersionCheck.reset();
         if(remoteUpdateDialog!=null){remoteUpdateDialog.dismiss();remoteUpdateDialog=null;}
     }
+    private void finishVirtualScaleRequest() {
+        if (virtualScaleTimeout != null) mainHandler.removeCallbacks(virtualScaleTimeout);
+        virtualScaleTimeout = null;
+        virtualScalePending = 0;
+        if (controls != null) controls.setVirtualScalePending(false);
+    }
+
+    private void requestVirtualDisplayScale(int percent) {
+        if (!ready || session == null || !displayScalingAvailable || virtualScalePending != 0) return;
+        int request = virtualScaleSequence.updateAndGet(value -> value == Integer.MAX_VALUE ? 1 : value + 1);
+        virtualScalePending = request;
+        if (controls != null) controls.setVirtualScalePending(true);
+        virtualScaleTimeout = () -> {
+            if (virtualScalePending != request) return;
+            finishVirtualScaleRequest();
+            if (controls != null) controls.updateVirtualScale(0, null);
+            toast("未收到虚拟屏缩放状态，请重试");
+        };
+        mainHandler.postDelayed(virtualScaleTimeout,5000);
+        session.virtualDisplayScale(percent, request);
+    }
+
     private void cancelDisplayResolutionTimeout(){if(displayResolutionTimeout!=null)mainHandler.removeCallbacks(displayResolutionTimeout);displayResolutionTimeout=null;}
     private void updateDisplayResolution(RemoteDisplayResolutions.Mode mode){
         if(!ready||session==null||!hasNetworkConsent())return;
@@ -743,8 +770,14 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             if(controls!=null)controls.displayResolutions(displayResolutions,selectedDisplay);
             if(message.optInt("type",-1)==16)return;
         }
-        if(message.optInt("type",-1)==18){
-            if(!message.optBoolean("accepted",false))toast("未能打开被控端的显示设置");
+        if(message.optInt("type",-1)==20){
+            JSONObject status = message.optJSONObject("virtual_scale");
+            if (status == null || virtualScalePending == 0 ||
+                status.optInt("request_id") != virtualScalePending) return;
+            finishVirtualScaleRequest();
+            if (controls != null)
+                controls.updateVirtualScale(status.optInt("percent"), status.optJSONArray("options"));
+            if (!status.optBoolean("accepted", false)) toast("虚拟屏缩放未生效，请重试");
             return;
         }
         if(message.optInt("type",-1)==5){JSONObject service=message.optJSONObject("service_status");remoteServiceAvailable=service!=null&&service.optBoolean("available",false);return;}
@@ -752,7 +785,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         JSONObject info=message.optJSONObject("host_info");
         if(info!=null){
             hostPlatform=info.optString("platform","");JSONArray list=info.optJSONArray("displays");if(list!=null)displays=list;history.metadata(serverKey(),connectedRemote,info.optString("host_name",connectedRemote),hostPlatform);
-            displayScalingAvailable=info.optBoolean("supports_display_scaling_settings",false);
+            displayScalingAvailable=info.optBoolean("supports_virtual_display_scale",false);
             if(controls!=null){controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);}
             boolean wasSupported=videoSettings.supported;videoSettings.setSupported(info.optBoolean("supports_video_settings",false));
             if(!videoSettings.supported)cancelVideoSettingsTimeout();
@@ -935,11 +968,13 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             captureBackgroundSession();backgroundSession.detach(this);backgroundSession.setBackground(true);
             mainHandler.removeCallbacks(presenceTick);recentPresence.setConnected(false,android.os.SystemClock.elapsedRealtime());announcementInbox.setConnected(false);
             cancelDisplayResolutionTimeout();if(displayResolutions.pending)displayResolutions.expire(displayResolutions.requested.id);
+            finishVirtualScaleRequest();
             cancelVideoSettingsTimeout();if(videoSettings.pending)videoSettings.expire(videoSettings.requestId);
             resetRemoteVersionCheck();if(disconnectDialog!=null)disconnectDialog.dismiss();
         }else if(documentSession==null||documentSession!=session||isFinishing()){if(session!=null)end(isFinishing()?"":L10n.tr("远程窗口已关闭，或后台保活未能启动，会话已结束"));stopSignaling();}
         super.onStop();}
     @Override protected void onDestroy(){dismissPrivacyUnlockDialog();mainHandler.removeCallbacks(documentTimeout);documentSession=null;documentToSave=null;appUpdates.setEnabled(false);pageHost.finish();resetRemoteVersionCheck();cancelVideoSettingsTimeout();cancelDisplayResolutionTimeout();previews.removeListener(previewChanged);if(privacyDialog!=null)privacyDialog.dismiss();if(previewDialog!=null)previewDialog.dismiss();announcementInbox.close();if(disconnectDialog!=null)disconnectDialog.dismiss();if(passwordDialog!=null)passwordDialog.dismiss();if(progressDialog!=null)progressDialog.dismiss();
+        finishVirtualScaleRequest();
         if(connectionDialog!=null)connectionDialog.dismiss();
         boolean retained=!isFinishing()&&backgroundSession!=null&&!backgroundSession.ended&&RemoteSessionService.current()==backgroundSession;
         if(backgroundSession!=null)backgroundSession.detach(this);

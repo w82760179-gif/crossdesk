@@ -3,7 +3,9 @@
 
 #include <Windows.h>
 
+#include <algorithm>
 #include <cwchar>
+#include <iterator>
 #include <optional>
 #include <string>
 #include <vector>
@@ -19,6 +21,47 @@ class WindowsSingleDisplayGuard {
  public:
   bool Tracked() const { return attempted_ || !saved_paths_.empty(); }
   const std::string& capture_display() const { return capture_display_; }
+
+  struct Scale {
+    int percent = 0;
+    bool accepted = false;
+    std::vector<int> options;
+  };
+
+  Scale DisplayScale(int requested) const {
+    if (capture_display_.empty()) return {};
+    const auto source = ExclusiveSource();
+    if (!source || GetDisplayLabel(SourceName(*source)) != capture_display_) return {};
+    const auto dpi = ReadScale(source->sourceInfo);
+    if (!dpi) return {};
+    Scale result;
+    result.percent = kScales[dpi->current - dpi->minimum];
+    result.options.assign(std::begin(kScales),
+                          std::begin(kScales) + dpi->maximum - dpi->minimum + 1);
+    if (requested == 0 || requested == result.percent) {
+      result.accepted = true;
+      return result;
+    }
+    const auto option = std::find(result.options.begin(), result.options.end(), requested);
+    if (option == result.options.end()) return result;
+    const auto& identity = source->sourceInfo;
+    DpiSet set{{static_cast<DISPLAYCONFIG_DEVICE_INFO_TYPE>(UINT32(-4)), sizeof(DpiSet),
+                identity.adapterId, identity.id},
+               dpi->minimum + static_cast<int>(option - result.options.begin())};
+    if (DisplayConfigSetDeviceInfo(&set.header) != ERROR_SUCCESS) return result;
+    const auto active = ExclusiveSource();
+    if (!active || active->sourceInfo.id != identity.id ||
+        active->sourceInfo.adapterId.LowPart != identity.adapterId.LowPart ||
+        active->sourceInfo.adapterId.HighPart != identity.adapterId.HighPart)
+      return {};
+    const auto actual = ReadScale(active->sourceInfo);
+    if (!actual) return {};
+    result.percent = kScales[actual->current - actual->minimum];
+    result.options.assign(std::begin(kScales),
+                          std::begin(kScales) + actual->maximum - actual->minimum + 1);
+    result.accepted = result.percent == requested;
+    return result;
+  }
 
   bool Update() {
     const auto now = GetTickCount64();
@@ -80,6 +123,30 @@ class WindowsSingleDisplayGuard {
  private:
   static constexpr UINT32 kWidth = 3000;
   static constexpr UINT32 kHeight = 2120;
+  static constexpr int kScales[] = {100, 125, 150, 175, 200, 225,
+                                    250, 300, 350, 400, 450, 500};
+  // Windows uses private DisplayConfig packet types for per-source DPI.
+  // Fail closed if the OS rejects these packets or returns an unknown range.
+  struct DpiGet {
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    LONG minimum, current, maximum;
+  };
+  struct DpiSet {
+    DISPLAYCONFIG_DEVICE_INFO_HEADER header;
+    LONG requested;
+  };
+  static_assert(sizeof(DpiGet) == 32 && sizeof(DpiSet) == 24);
+  static std::optional<DpiGet> ReadScale(const DISPLAYCONFIG_PATH_SOURCE_INFO& source) {
+    DpiGet dpi{{static_cast<DISPLAYCONFIG_DEVICE_INFO_TYPE>(UINT32(-3)), sizeof(DpiGet),
+                source.adapterId, source.id}, 0, 0, 0};
+    constexpr int count = static_cast<int>(std::size(kScales));
+    if (DisplayConfigGetDeviceInfo(&dpi.header) != ERROR_SUCCESS ||
+        dpi.minimum > 0 || dpi.minimum <= -count ||
+        dpi.maximum < 0 || dpi.maximum >= count ||
+        dpi.maximum - dpi.minimum >= count ||
+        dpi.current < dpi.minimum || dpi.current > dpi.maximum) return std::nullopt;
+    return dpi;
+  }
   static constexpr UINT32 kConfig =
       SDC_USE_SUPPLIED_DISPLAY_CONFIG | SDC_ALLOW_CHANGES;
 
@@ -162,7 +229,7 @@ class WindowsSingleDisplayGuard {
     return true;
   }
 
-  static std::string ExclusiveDisplayName() {
+  static std::optional<DISPLAYCONFIG_PATH_INFO> ExclusiveSource() {
     std::vector<DISPLAYCONFIG_PATH_INFO> paths;
     std::vector<DISPLAYCONFIG_MODE_INFO> modes;
     if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes) || paths.size() != 1)
@@ -175,7 +242,12 @@ class WindowsSingleDisplayGuard {
     const auto& mode = modes[index].sourceMode;
     if (mode.width != kWidth || mode.height != kHeight ||
         mode.position.x != 0 || mode.position.y != 0) return {};
-    return GetDisplayLabel(SourceName(path));
+    return path;
+  }
+
+  static std::string ExclusiveDisplayName() {
+    const auto source = ExclusiveSource();
+    return source ? GetDisplayLabel(SourceName(*source)) : std::string{};
   }
 
   bool Fail(const char* message) {

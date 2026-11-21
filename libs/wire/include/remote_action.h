@@ -38,6 +38,8 @@ enum ControlType {
   display_resolution_status = 16,
   open_display_scaling = 17,
   open_display_scaling_status = 18,
+  virtual_display_scale = 19,
+  virtual_display_scale_status = 20,
 };
 
 enum MouseFlag {
@@ -146,7 +148,7 @@ struct HostInfo {
   bool supports_video_settings;
   bool supports_video_codec_status;
   bool supports_text_input;
-  bool supports_display_scaling_settings;
+  bool supports_virtual_display_scale;
   bool supports_deskhub_preview;
   bool supports_deskhub_resolution;
   bool supports_deskhub_fps15;
@@ -228,6 +230,12 @@ struct RemoteAction {
   // Optional host information extension, also returned with resolution status.
   std::vector<DisplayResolutionInfo> display_resolutions;
   DisplayResolutionChange resolution_change;
+  struct VirtualDisplayScale {
+    uint32_t request_id = 0;
+    int percent = 0;  // Zero queries the current scale.
+    bool accepted = false;
+    std::vector<int> options;
+  } virtual_scale;
   // Controller preferences sent with its initial host information.
   std::vector<DisplayResolutionPreference> preferred_display_resolutions;
 

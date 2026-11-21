@@ -1,9 +1,6 @@
 #include "runtime/gui_runtime.h"
 
 #include <SDL3/SDL_timer.h>
-#ifdef _WIN32
-#include <SDL3/SDL_misc.h>
-#endif
 
 #include "rd_log.h"
 
@@ -165,16 +162,18 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
 }
 
 #ifdef _WIN32
-void GuiRuntime::QueueDisplayScalingSettings(const std::string& id,
-                                             PeerEventHandler* source) {
+void GuiRuntime::QueueVirtualDisplayScale(
+    const std::string& id, PeerEventHandler* source,
+    const RemoteAction::VirtualDisplayScale& request) {
   const auto events = ControllerEvents(id);
-  if (events.get() != source || !IsAuthorizedController(id)) return;
+  if (unattended_host_ || events.get() != source || !IsAuthorizedController(id))
+    return;
   std::lock_guard lock(display_resolution_commands_mutex_);
-  if (display_scaling_commands_.empty())
-    display_scaling_commands_.push_back({id, events});
+  if (display_scaling_commands_.size() < 8)
+    display_scaling_commands_.push_back({id, events, request});
 }
 
-void GuiRuntime::HandleDisplayScalingSettings() {
+void GuiRuntime::HandleVirtualDisplayScale() {
   std::deque<PendingDisplayScalingSettings> commands;
   {
     std::lock_guard lock(display_resolution_commands_mutex_);
@@ -186,11 +185,21 @@ void GuiRuntime::HandleDisplayScalingSettings() {
         source != ControllerEvents(command.remote_id) ||
         !IsAuthorizedController(command.remote_id)) continue;
     RemoteAction reply{};
-    reply.type = ControlType::open_display_scaling_status;
-    reply.a = devices_.WindowsTabletDisplayReady() &&
-              IsCurrentSessionUserDesktopActive() &&
-              SDL_OpenURL("ms-settings:display");
-    LOG_INFO("Tablet display: Windows scaling settings opened={}", reply.a);
+    reply.type = ControlType::virtual_display_scale_status;
+    auto& response = reply.virtual_scale;
+    response.request_id = command.request.request_id;
+    if (devices_.WindowsTabletDisplayReady() && IsCurrentSessionUserDesktopActive()) {
+      std::lock_guard lock(native_display_resolution_mutex);
+      if (source->IsActive()) {
+        auto result = windows_single_display_guard.DisplayScale(command.request.percent);
+        response.percent = result.percent;
+        response.accepted = result.accepted;
+        response.options = std::move(result.options);
+      }
+    }
+    if (command.request.percent != 0)
+      LOG_INFO("Tablet display: scale requested={} actual={} accepted={}",
+               command.request.percent, response.percent, response.accepted);
     const auto message = reply.to_json();
     SendControllerData(command.remote_id, message.data(), message.size(),
                        control_data_label_.c_str());
@@ -201,7 +210,7 @@ void GuiRuntime::HandleDisplayScalingSettings() {
 bool GuiRuntime::HandleDisplayResolutionChanges() {
   RestoreHostDisplayResolutions();
 #ifdef _WIN32
-  HandleDisplayScalingSettings();
+  HandleVirtualDisplayScale();
   if (!stopping_ && !unattended_host_ && !ConnectedControllers().empty()) {
     if (!IsCurrentSessionUserDesktopActive()) return false;
     std::lock_guard lock(native_display_resolution_mutex);

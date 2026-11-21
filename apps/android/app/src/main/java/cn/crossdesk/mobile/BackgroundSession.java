@@ -66,7 +66,7 @@ final class BackgroundSession implements NativeSession.Listener {
         JSONObject info = message.optJSONObject("host_info");
         if (info != null) {
             platform = info.optString("platform", "");
-            displayScalingAvailable = info.optBoolean("supports_display_scaling_settings", false);
+            displayScalingAvailable = info.optBoolean("supports_virtual_display_scale", false);
             JSONArray values = info.optJSONArray("displays"); if (values != null) displays = values;
             if (videoSettings != null) videoSettings.setSupported(info.optBoolean("supports_video_settings", false));
         }

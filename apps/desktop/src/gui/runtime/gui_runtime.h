@@ -15,6 +15,8 @@
 #include <memory>
 #include <string>
 
+#include <remote_action.h>
+
 #include "desktop_automation.h"
 #include "features/clipboard/clipboard_controller.h"
 #include "features/devices/session_device_manager.h"
@@ -162,8 +164,9 @@ class GuiRuntime : protected gui_detail::GuiState {
                                     const DisplayResolutionChange& change);
   bool HandleDisplayResolutionChanges();
 #ifdef _WIN32
-  void QueueDisplayScalingSettings(const std::string& id, PeerEventHandler* source);
-  void HandleDisplayScalingSettings();
+  void QueueVirtualDisplayScale(const std::string& id, PeerEventHandler* source,
+                                const RemoteAction::VirtualDisplayScale& request);
+  void HandleVirtualDisplayScale();
 #endif
   void RestoreHostDisplayResolutions(bool force = false);
   bool ApplyHostDisplayResolution(const DisplayResolutionChange& change);
@@ -279,6 +282,7 @@ class GuiRuntime : protected gui_detail::GuiState {
   struct PendingDisplayScalingSettings {
     std::string remote_id;
     std::weak_ptr<PeerEventHandler> source;
+    RemoteAction::VirtualDisplayScale request;
   };
   std::deque<PendingDisplayScalingSettings> display_scaling_commands_;
 #endif

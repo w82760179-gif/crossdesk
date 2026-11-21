@@ -15,7 +15,7 @@ final class SessionControls extends FrameLayout {
         default boolean textEdit(int deletions,String value){return false;}
         void videoSettings(int field,int value);
         default void displayResolution(RemoteDisplayResolutions.Mode mode) { }
-        default void openDisplayScaling() { }
+        default void virtualDisplayScale(int percent) { }
         void sendFile(); void saveFile(); void secureAttention();
         default void togglePrivacy() { }
         default void fillScreen(boolean fill) { }
@@ -62,10 +62,67 @@ final class SessionControls extends FrameLayout {
     private View encryptionLock,encryptionOpen;
     private boolean muted,relative=true,orbPositioned,secureAttentionVisible;
     private boolean displayScalingAvailable;
+    private boolean virtualScalePending;
+    private int virtualScalePercent;
+    private int[] virtualScaleOptions = new int[0];
+    private TextView virtualScaleButton;
+    private android.app.AlertDialog virtualScaleDialog;
+
     void setDisplayScalingAvailable(boolean available){
         if(displayScalingAvailable==available)return;
         displayScalingAvailable=available;
         if(menu!=null&&menuPage.equals("video"))openMenu("video");
+    }
+
+    void setVirtualScalePending(boolean pending) {
+        virtualScalePending = pending;
+        renderVirtualScale();
+    }
+
+    void updateVirtualScale(int percent, org.json.JSONArray options) {
+        if (options == null || options.length() > 12) {
+            virtualScalePercent = 0;
+            virtualScaleOptions = new int[0];
+        } else {
+            int[] values = new int[options.length()];
+            boolean containsCurrent = false;
+            for (int i = 0; i < values.length; ++i) {
+                values[i] = options.optInt(i);
+                containsCurrent |= values[i] == percent && percent >= 100 && percent <= 500;
+            }
+            virtualScalePercent = containsCurrent ? percent : 0;
+            virtualScaleOptions = containsCurrent ? values : new int[0];
+        }
+        renderVirtualScale();
+    }
+
+    private void renderVirtualScale() {
+        if (virtualScaleButton == null) return;
+        String value = virtualScalePercent > 0 ? virtualScalePercent + "%" : "点击读取";
+        virtualScaleButton.setText("缩放  " + (virtualScalePending ? "…" : value));
+        virtualScaleButton.setEnabled(!virtualScalePending);
+    }
+
+    private void chooseVirtualScale() {
+        if (virtualScaleOptions.length == 0) {
+            actions.virtualDisplayScale(0);
+            return;
+        }
+        int[] options = virtualScaleOptions.clone();
+        String[] labels = new String[options.length];
+        int chosen = -1;
+        for (int i = 0; i < options.length; ++i) {
+            labels[i] = options[i] + "%";
+            if (options[i] == virtualScalePercent) chosen = i;
+        }
+        virtualScaleDialog = new android.app.AlertDialog.Builder(getContext())
+            .setTitle("虚拟屏缩放")
+            .setSingleChoiceItems(labels, chosen, (dialog, index) -> {
+                dialog.dismiss();
+                actions.virtualDisplayScale(options[index]);
+            })
+            .setNegativeButton(android.R.string.cancel, null)
+            .show();
     }
     SessionControls(Context context,MobileUi ui,Actions actions){
         super(context);this.ui=ui;this.actions=actions;
@@ -135,7 +192,7 @@ final class SessionControls extends FrameLayout {
         if(transferLabel!=null){transferLabel.setText(transferStatus);transferLabel.setVisibility(transferStatus.isEmpty()?GONE:VISIBLE);}
         if(saveFileButton!=null)saveFileButton.setVisibility(hasReceivedFile?VISIBLE:GONE);
     }
-    private void closeMenu(){if(resolutionDialog!=null){resolutionDialog.dismiss();resolutionDialog=null;}resolutionButton=resolutionFeedback=null;if(menu!=null){removeView(menu);menu=null;menuScroll=null;}if(shield!=null){removeView(shield);shield=null;}videoFeedback=transferLabel=saveFileButton=null;privacyFeedback=privacyCaption=null;privacyButton=null;privacyIcon=null;trafficCells=null;trafficRows=null;networkDetails=null;encryptionLock=encryptionOpen=null;settingRows.clear();orb.setContentDescription(L10n.tr("展开远程控制菜单"));positionMouse();}
+    private void closeMenu(){if(resolutionDialog!=null){resolutionDialog.dismiss();resolutionDialog=null;}if(virtualScaleDialog!=null){virtualScaleDialog.dismiss();virtualScaleDialog=null;}virtualScaleButton=null;resolutionButton=resolutionFeedback=null;if(menu!=null){removeView(menu);menu=null;menuScroll=null;}if(shield!=null){removeView(shield);shield=null;}videoFeedback=transferLabel=saveFileButton=null;privacyFeedback=privacyCaption=null;privacyButton=null;privacyIcon=null;trafficCells=null;trafficRows=null;networkDetails=null;encryptionLock=encryptionOpen=null;settingRows.clear();orb.setContentDescription(L10n.tr("展开远程控制菜单"));positionMouse();}
     private void openMenu(String page){actions.menuOpened();
         cancelMouseInput();
         closeMenu();menuPage=page;shield=new View(getContext());shield.setOnClickListener(v->closeMenu());addView(shield,new LayoutParams(-1,-1));
@@ -153,7 +210,7 @@ final class SessionControls extends FrameLayout {
         if(page.equals("controls")){
             String[] labels={L10n.tr("键盘"),mouseVisible?L10n.tr("收起鼠标"):L10n.tr("虚拟鼠标"),relative?L10n.tr("相对鼠标"):L10n.tr("绝对鼠标"),L10n.tr("显示器"),L10n.tr("画面设置"),muted?L10n.tr("静音"):L10n.tr("声音"),L10n.tr("发送文件"),L10n.tr("网络状态"),"Ctrl+Alt+Del",L10n.tr("剪贴板"),L10n.tr("隐私屏")};
             String[] icons={"keyboard","mouse","mouse","display","sliders","audio","folder","chart","lock","clipboard","eye"};
-            Runnable[] clicks={()->{closeMenu();toggleKeyboard();},this::toggleMouse,actions::mouse,actions::display,()->openMenu("video"),actions::mute,actions::sendFile,()->openMenu("network"),actions::secureAttention,actions::clipboard,actions::togglePrivacy};
+            Runnable[] clicks={()->{closeMenu();toggleKeyboard();},this::toggleMouse,actions::mouse,actions::display,()->{openMenu("video");if(displayScalingAvailable)actions.virtualDisplayScale(0);},actions::mute,actions::sendFile,()->openMenu("network"),actions::secureAttention,actions::clipboard,actions::togglePrivacy};
             menuColumns=controlColumns();
             java.util.List<Integer> visibleControls=new java.util.ArrayList<>();
             for(int index=0;index<labels.length;index++){
@@ -171,13 +228,16 @@ final class SessionControls extends FrameLayout {
         }else if(page.equals("network")){
             networkPage(body);
         }else{
-            TextView resolutionTitle=ui.text(L10n.tr("被控端分辨率"),12,false);resolutionTitle.setTextColor(SECONDARY);body.addView(resolutionTitle);ui.gap(body,5);
+            TextView resolutionTitle=ui.text(displayScalingAvailable?"虚拟屏 1":L10n.tr("被控端分辨率"),12,false);resolutionTitle.setTextColor(SECONDARY);body.addView(resolutionTitle);ui.gap(body,5);
             resolutionButton=ui.action("",INK,this::chooseResolution);resolutionButton.setTextSize(13);resolutionButton.setBackground(ui.background(0xFFF0F0F2,7));body.addView(resolutionButton,ui.size(-1,34));
             resolutionFeedback=ui.text("",12,false);resolutionFeedback.setTextColor(SECONDARY);resolutionFeedback.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);body.addView(resolutionFeedback);ui.gap(body,12);renderResolutions();
             if(displayScalingAvailable){
-                TextView scale=ui.action("调整被控端缩放",INK,()->{closeMenu();actions.openDisplayScaling();});
-                scale.setTextSize(13);scale.setBackground(ui.background(0xFFF0F0F2,7));
-                body.addView(scale,ui.size(-1,34));ui.gap(body,12);
+                virtualScaleButton = ui.action("", INK, this::chooseVirtualScale);
+                virtualScaleButton.setTextSize(13);
+                virtualScaleButton.setBackground(ui.background(0xFFF0F0F2, 7));
+                body.addView(virtualScaleButton, ui.size(-1, 34));
+                ui.gap(body, 12);
+                renderVirtualScale();
             }
             settingRows.add(new SettingRow(body,0,L10n.tr("画面质量"),new String[]{L10n.tr("低"),L10n.tr("中"),L10n.tr("高")},new int[]{0,1,2}));ui.gap(body,12);
             settingRows.add(new SettingRow(body,1,L10n.tr("画面采集帧率"),new String[]{"30 fps","60 fps"},new int[]{30,60}));ui.gap(body,12);

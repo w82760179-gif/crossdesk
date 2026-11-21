@@ -287,9 +287,9 @@ void PeerEventHandler::OnReceiveDataBuffer(
   }
 
 #ifdef _WIN32
-  if (remote_action.type == ControlType::open_display_scaling) {
+  if (remote_action.type == ControlType::virtual_display_scale) {
     if (source_id == runtime->control_data_label_)
-      runtime->QueueDisplayScalingSettings(remote_id, handler);
+      runtime->QueueVirtualDisplayScale(remote_id, handler, remote_action.virtual_scale);
     return;
   }
 #endif
