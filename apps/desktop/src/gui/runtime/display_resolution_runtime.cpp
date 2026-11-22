@@ -211,7 +211,9 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
   RestoreHostDisplayResolutions();
 #ifdef _WIN32
   HandleVirtualDisplayScale();
-  if (!stopping_ && !unattended_host_ && !ConnectedControllers().empty()) {
+  const bool has_controller = !stopping_ && !unattended_host_ &&
+                              !ConnectedControllers().empty();
+  if (has_controller) {
     if (!IsCurrentSessionUserDesktopActive()) return false;
     std::lock_guard lock(native_display_resolution_mutex);
     if (!windows_single_display_guard.Update()) return false;
@@ -220,6 +222,14 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
       last_display_resolutions_.clear();
       // The device manager reinitializes the capture list after this tick.
       next_display_resolution_poll_ = SDL_GetTicks() + 100;
+    }
+  } else if (!stopping_ && !unattended_host_ && !managed_host_frontend_ &&
+             SDL_GetTicks() >= next_idle_virtual_display_check_) {
+    next_idle_virtual_display_check_ = SDL_GetTicks() + 2000;
+    if (IsCurrentSessionUserDesktopActive()) {
+      std::lock_guard lock(native_display_resolution_mutex);
+      if (!windows_single_display_guard.Tracked())
+        windows_single_display_guard.RemoveIdleVirtualDisplay();
     }
   }
 #endif

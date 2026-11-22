@@ -74,8 +74,9 @@ class WindowsSingleDisplayGuard {
     }
     if (!attempted_) {
       attempted_ = true;
-      if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &saved_paths_, &saved_modes_))
-        return Fail("could not read the original Windows display layout");
+      if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &saved_paths_, &saved_modes_) ||
+          !KeepPhysicalPaths(saved_paths_, saved_modes_))
+        return Fail("could not save a physical display layout");
       if (!ApplyVirtualTopology())
         return Fail("MttVDD did not offer an available 3000x2120 display");
       switching_ = true;
@@ -118,6 +119,16 @@ class WindowsSingleDisplayGuard {
     if (!RestoreTopology()) return false;
     attempted_ = false;
     return true;
+  }
+
+  static void RemoveIdleVirtualDisplay() {
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths;
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes;
+    if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes)) return;
+    const auto active_paths = paths.size();
+    if (!KeepPhysicalPaths(paths, modes) || paths.size() == active_paths) return;
+    if (ApplyPhysicalTopology(paths, modes))
+      LOG_INFO("Tablet display: detached an idle virtual output");
   }
 
  private:
@@ -194,6 +205,55 @@ class WindowsSingleDisplayGuard {
     }
   }
 
+  static bool KeepPhysicalPaths(std::vector<DISPLAYCONFIG_PATH_INFO>& paths,
+                                std::vector<DISPLAYCONFIG_MODE_INFO>& modes) {
+    const auto active_paths = paths.size();
+    paths.erase(std::remove_if(paths.begin(), paths.end(), IsMttVdd), paths.end());
+    if (paths.empty()) return false;
+    if (paths.size() == active_paths) return true;
+
+    // Preserve monitor arrangement. Move the remaining group only if MttVDD
+    // owned the origin, since Windows requires a desktop source at (0, 0).
+    std::vector<UINT32> sources;
+    for (const auto& path : paths) {
+      const auto index = path.sourceInfo.modeInfoIdx;
+      if (index >= modes.size() || modes[index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
+        return false;
+      if (std::find(sources.begin(), sources.end(), index) == sources.end())
+        sources.push_back(index);
+    }
+    for (const auto index : sources) {
+      const auto& position = modes[index].sourceMode.position;
+      if (position.x == 0 && position.y == 0) return true;
+    }
+    const auto origin = modes[sources.front()].sourceMode.position;
+    for (const auto index : sources) {
+      auto& position = modes[index].sourceMode.position;
+      position.x -= origin.x;
+      position.y -= origin.y;
+    }
+    return true;
+  }
+
+  static bool ApplyPhysicalTopology(std::vector<DISPLAYCONFIG_PATH_INFO>& paths,
+                                    std::vector<DISPLAYCONFIG_MODE_INFO>& modes) {
+    const auto path_count = static_cast<UINT32>(paths.size());
+    const auto mode_count = static_cast<UINT32>(modes.size());
+    auto status = SetDisplayConfig(path_count, paths.data(), mode_count,
+                                   modes.data(), SDC_VALIDATE | kConfig);
+    if (status == ERROR_SUCCESS)
+      status = SetDisplayConfig(path_count, paths.data(), mode_count,
+                                modes.data(), SDC_APPLY | kConfig);
+    if (status != ERROR_SUCCESS) {
+      LOG_WARN("Tablet display: restoring physical topology failed, status={}", status);
+      return false;
+    }
+    std::vector<DISPLAYCONFIG_PATH_INFO> active;
+    std::vector<DISPLAYCONFIG_MODE_INFO> active_modes;
+    return ReadTopology(QDC_ONLY_ACTIVE_PATHS, &active, &active_modes) &&
+           std::none_of(active.begin(), active.end(), IsMttVdd);
+  }
+
   static std::optional<DISPLAYCONFIG_PATH_INFO> FindVirtualPath() {
     std::vector<DISPLAYCONFIG_PATH_INFO> paths;
     std::vector<DISPLAYCONFIG_MODE_INFO> modes;
@@ -260,14 +320,7 @@ class WindowsSingleDisplayGuard {
 
   bool RestoreTopology() {
     if (changed_) {
-      const auto status = SetDisplayConfig(
-          static_cast<UINT32>(saved_paths_.size()), saved_paths_.data(),
-          static_cast<UINT32>(saved_modes_.size()), saved_modes_.data(),
-          SDC_APPLY | kConfig);
-      if (status != ERROR_SUCCESS) {
-        LOG_WARN("Tablet display: restoring original display topology failed, status={}", status);
-        return false;
-      }
+      if (!ApplyPhysicalTopology(saved_paths_, saved_modes_)) return false;
       changed_ = false;
     }
     saved_paths_.clear();

@@ -285,6 +285,7 @@ class GuiRuntime : protected gui_detail::GuiState {
     RemoteAction::VirtualDisplayScale request;
   };
   std::deque<PendingDisplayScalingSettings> display_scaling_commands_;
+  uint64_t next_idle_virtual_display_check_ = 0;
 #endif
   struct InitialDisplayResolutions {
     std::weak_ptr<PeerEventHandler> source;

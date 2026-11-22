@@ -6,9 +6,11 @@ import android.view.*;
 import android.widget.*;
 import static cn.crossdesk.mobile.MobileUi.*;
 
-/** Safe-area overlay: a draggable 54 dp orb, an adaptive menu and a docked keyboard. */
+/** Safe-area overlay with a draggable menu button and a docked keyboard. */
 @android.annotation.SuppressLint("ViewConstructor")
 final class SessionControls extends FrameLayout {
+    private static final int MENU_TOUCH_SIZE_DP = 48;
+    private static final int MENU_BUTTON_SIZE_DP = 32;
     interface Actions {
         void disconnect(); void display(); void clipboard(); void key(int code);
         void chord(int code,int[] modifiers); void shortcut(int code); void text(String value); void mute(); void mouse();
@@ -132,9 +134,20 @@ final class SessionControls extends FrameLayout {
         waiting=ui.column();waiting.setMinimumWidth(ui.dp(200));waiting.setGravity(Gravity.CENTER);waiting.setPadding(ui.dp(20),ui.dp(20),ui.dp(20),ui.dp(20));waiting.setBackground(ui.background(0xB0202024,14));
         ProgressBar progress=new ProgressBar(context);progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));waiting.addView(progress,ui.size(28,28));ui.gap(waiting,12);TextView message=ui.text(L10n.tr("等待远端画面…"),14,false);message.setTextColor(Color.WHITE);message.setGravity(Gravity.CENTER);waiting.addView(message);addView(waiting,new LayoutParams(-2,-2,Gravity.CENTER));
         orb=ui.iconButton("display",L10n.tr("展开远程控制菜单"),()->{if(menu==null)openMenu("controls");else closeMenu();});
-        ImageView brand=new ImageView(context);brand.setImageResource(R.drawable.mobile_brand);brand.setScaleType(ImageView.ScaleType.CENTER_CROP);brand.setBackground(ui.background(Color.WHITE,23));brand.setClipToOutline(true);brand.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
-        ((FrameLayout)orb).removeAllViews();((FrameLayout)orb).addView(brand,new LayoutParams(ui.dp(46),ui.dp(46),Gravity.CENTER));
-        orb.setBackground(ui.background(0xFFF5F5F7,27));orb.setElevation(ui.dp(7));addView(orb,new LayoutParams(ui.dp(54),ui.dp(54)));
+        FrameLayout button = (FrameLayout) orb;
+        button.removeAllViews();
+        button.setBackground(null);
+        button.setElevation(ui.dp(3));
+        ImageView brand = new ImageView(context);
+        brand.setImageResource(R.drawable.mobile_brand);
+        brand.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        brand.setPadding(ui.dp(3), ui.dp(3), ui.dp(3), ui.dp(3));
+        brand.setBackground(ui.background(0xFFF5F5F7, MENU_BUTTON_SIZE_DP / 2));
+        brand.setElevation(ui.dp(2));
+        brand.setClipToOutline(true);
+        brand.setImportantForAccessibility(IMPORTANT_FOR_ACCESSIBILITY_NO);
+        button.addView(brand, new LayoutParams(ui.dp(MENU_BUTTON_SIZE_DP), ui.dp(MENU_BUTTON_SIZE_DP), Gravity.CENTER));
+        addView(button, new LayoutParams(ui.dp(MENU_TOUCH_SIZE_DP), ui.dp(MENU_TOUCH_SIZE_DP)));
         drag(orb,orb,()->{if(menu==null)openMenu("controls");else closeMenu();});
     }
     void setFillScreen(boolean value){fillScreen=value;}
@@ -415,7 +428,7 @@ final class SessionControls extends FrameLayout {
     }
     @Override protected void onLayout(boolean changed,int left,int top,int right,int bottom){
         super.onLayout(changed,left,top,right,bottom);
-        if(!orbPositioned){orb.setX(Math.max(ui.dp(12),getWidth()-ui.dp(66)));orb.setY(ui.dp(17));orbPositioned=true;}
+        if(!orbPositioned){orb.setX(Math.max(ui.dp(12),getWidth()-ui.dp(MENU_TOUCH_SIZE_DP+12)));orb.setY(ui.dp(17));orbPositioned=true;}
         orb.setX(bound(orb.getX(),ui.dp(8),getWidth()-orb.getWidth()-ui.dp(8)));orb.setY(bound(orb.getY(),ui.dp(8),getHeight()-orb.getHeight()-ui.dp(8)));
         // New/rebuilt menus have real dimensions now; position them in the same frame.
         positionMenu();
