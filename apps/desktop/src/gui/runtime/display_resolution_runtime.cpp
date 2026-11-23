@@ -139,8 +139,13 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
   next_display_resolution_restore_ = now + 2000;
   std::lock_guard lock(native_display_resolution_mutex);
 #ifdef _WIN32
-  if (!IsCurrentSessionUserDesktopActive())
+  if (!IsCurrentSessionUserDesktopActive()) {
+    // The helper retains the snapshots and retries if Windows temporarily
+    // denies mode changes on a locked desktop. Signal the disconnect now.
+    if (windows_single_display_guard.Tracked() && windows_single_display_guard.Restore())
+      devices_.SetWindowsSessionDisplay({});
     return;
+  }
 #endif
   if (!display_resolution_restoration_.Empty()) {
     if (display_resolution_restoration_.RestoreAll())

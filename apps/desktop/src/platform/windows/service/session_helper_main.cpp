@@ -28,6 +28,8 @@
 #include "platform/path_backend.h"
 #include "rd_log.h"
 #include "session_helper_shared.h"
+#include "single_display_win.h"
+#include <charconv>
 #include "secure_text_input.h"
 #include "secure_desktop_dxgi_capture.h"
 #include "secure_desktop_wgc_capture.h"
@@ -2220,6 +2222,18 @@ int main(int argc, char* argv[]) {
   if (shutdown_error != ERROR_SUCCESS) {
     LOG_WARN("Could not configure Windows helper shutdown order, error={}",
              shutdown_error);
+  }
+
+  if (argc == 5 && std::strcmp(argv[1], "--tablet-display") == 0) {
+    HANDLE handles[3]{};
+    for (int i = 0; i < 3; ++i) {
+      uintptr_t value = 0;
+      const auto end = argv[i + 2] + std::strlen(argv[i + 2]);
+      const auto parsed = std::from_chars(argv[i + 2], end, value);
+      if (parsed.ec != std::errc{} || parsed.ptr != end || !value) return 1;
+      handles[i] = reinterpret_cast<HANDLE>(value);
+    }
+    return crossdesk::WindowsSingleDisplayGuard::RunDisplayHelper(handles[0], handles[1], handles[2]);
   }
 
   bool run_helper = false;

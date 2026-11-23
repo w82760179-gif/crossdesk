@@ -13,15 +13,16 @@
 #include <vector>
 
 #include "display_label.h"
+#include "tablet_display_process.h"
 #include "rd_log.h"
 
 namespace crossdesk {
 
-// A connected viewer can receive input and video only while this exact
-// virtual desktop is active. Keep the original topology in memory for teardown.
+// Only the capture owner may request a tablet session. The independent helper
+// holds the display lease until both original layouts have been restored.
 class WindowsSingleDisplayGuard {
  public:
-  bool Tracked() const { return lease_ != nullptr; }
+  bool Tracked() const { return worker_.started(); }
   static bool DriverPresent() {
     for (DWORD i = 0;; ++i) {
       DISPLAY_DEVICEW adapter{};
@@ -75,78 +76,93 @@ class WindowsSingleDisplayGuard {
 
   bool Update() {
     const auto now = GetTickCount64();
-    if (!lease_) {
-      if (now < next_probe_) return false;
-      lease_ = AcquireLease();
-      if (!lease_) { next_probe_ = now + 1000; return false; }
+    if (stopping_) {
+      if (!Restore()) return false;
     }
-    if (attempted_ && !switching_ && capture_display_.empty()) {
+    if (!worker_.started()) {
       if (now < next_probe_) return false;
       next_probe_ = now + 2000;
-      if (!RestoreTopology()) return false;
-      attempted_ = false;
-    }
-    if (!attempted_) {
-      attempted_ = true;
-      if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &saved_paths_, &saved_modes_) ||
-          !KeepPhysicalPaths(saved_paths_, saved_modes_))
-        return Fail("could not save a physical display layout");
-      saved_primary_.clear();
-      for (const auto& path : saved_paths_) {
-        const auto index = path.sourceInfo.modeInfoIdx;
-        if (index >= saved_modes_.size()) continue;
-        const auto& p = saved_modes_[index].sourceMode.position;
-        if (p.x == 0 && p.y == 0) { saved_primary_ = TargetPath(path); break; }
-      }
-      keep_physical_outputs_ = saved_paths_.size() > 1;
-      if (!ApplyVirtualTopology())
-        return Fail("MttVDD did not offer an available 3000x2120 display");
-      switching_ = true;
-      stable_since_ = 0;
-      next_probe_ = now + 250;
+      if (!worker_.Start()) return false;
       deadline_ = now + 12000;
-      return false;
     }
-    if (now < next_probe_) return !capture_display_.empty();
-    next_probe_ = now + (switching_ ? 250 : 500);
+    if (!worker_.running() || (!worker_.ready() && now >= deadline_))
+      return Fail("display helper did not become ready");
+    if (!worker_.ready()) return false;
+    if (!capture_display_.empty() && now < next_probe_) return true;
+    next_probe_ = now + 500;
     const auto active = ActiveVirtualDisplayName();
-    if (active.empty()) {
-      stable_since_ = 0;
-      if (!switching_ || now >= deadline_)
-        return Fail("the requested 3000x2120 virtual layout did not stay stable");
-      return false;
-    }
-
-    if (!switching_) {
-      if (active != capture_display_) return Fail("virtual screen identity changed");
-      return true;
-    }
-    if (stable_since_ == 0) stable_since_ = now;
-    // Some display drivers revert a newly applied topology several seconds
-    // later. Wait through that transition before opening either media or input.
-    if (now - stable_since_ < (keep_physical_outputs_ ? 500u : 7000u)) {
-      if (now >= deadline_) return Fail("the virtual screen did not stabilize");
-      return false;
-    }
-    switching_ = false;
+    if (active.empty() || (!capture_display_.empty() && active != capture_display_))
+      return Fail("exclusive virtual output changed");
+    if (capture_display_.empty())
+      LOG_INFO("Tablet display: {} ready at 3000x2120 (exclusive)", active);
     capture_display_ = active;
-    LOG_INFO("Tablet display: {} ready at 3000x2120 ({})",
-             capture_display_, keep_physical_outputs_ ? "physical outputs retained" : "exclusive");
     return true;
   }
 
   bool Restore() {
     capture_display_.clear();
-    switching_ = false;
-    if (!RestoreTopology()) return false;
-    attempted_ = false;
-    next_probe_ = 0;
-    if (lease_) {
-      ReleaseMutex(lease_);
-      CloseHandle(lease_);
-      lease_ = nullptr;
-    }
+    stopping_ = true;
+    if (!worker_.Stop()) return false;
+    stopping_ = false;
     return true;
+  }
+
+  // Called only in the display helper process. Its parent supplies inherited
+  // handles, so a recycled PID cannot keep a disconnected desktop black.
+  static int RunDisplayHelper(HANDLE parent, HANDLE stop, HANDLE ready) {
+    HANDLE signals[] = {parent, stop};
+    if (WaitForMultipleObjects(2, signals, FALSE, 0) != WAIT_TIMEOUT) return 1;
+    HANDLE lease = AcquireLease();
+    if (!lease) return 1;
+    // Process exit releases the lease on every return path.
+    Layout active, database;
+    if (!active.Read(QDC_ONLY_ACTIVE_PATHS) || !database.Read(QDC_DATABASE_CURRENT) ||
+        std::all_of(active.paths.begin(), active.paths.end(), IsMttVdd) ||
+        !active.Validate() || !database.Validate()) return 1;
+    if (WaitForMultipleObjects(2, signals, FALSE, 0) != WAIT_TIMEOUT) return 0;
+    const bool applied = ApplyVirtualTopology();
+    if (!applied && active.Matches(QDC_ONLY_ACTIVE_PATHS) && database.Matches(QDC_DATABASE_CURRENT))
+      return 1;
+    bool confirmed = false;
+    for (unsigned i = 0; applied && i < 20; ++i) {
+      if (WaitForMultipleObjects(2, signals, FALSE, 0) != WAIT_TIMEOUT) break;
+      if (ActiveVirtualSource(QDC_ONLY_ACTIVE_PATHS) && ActiveVirtualSource(QDC_DATABASE_CURRENT)) {
+        confirmed = SetEvent(ready) != FALSE;
+        break;
+      }
+      Sleep(100);
+    }
+    if (confirmed) WaitForMultipleObjects(2, signals, FALSE, INFINITE);
+    // Applying the saved configuration also changes the live layout. Always
+    // restore it first, then put the user's transient desktop back on top.
+    for (unsigned i = 0;; ++i) {
+      if ((database.Matches(QDC_DATABASE_CURRENT) || database.Apply(true)) &&
+          (active.Matches(QDC_ONLY_ACTIVE_PATHS) || active.Apply(false))) {
+        Sleep(350);
+        if (active.Matches(QDC_ONLY_ACTIVE_PATHS) && database.Matches(QDC_DATABASE_CURRENT)) {
+          LOG_INFO("Tablet display: original active and saved layouts restored");
+          return 0;
+        }
+      }
+      // Wake the physical outputs while hotplug settles, or expose the
+      // available physical layout if a monitor was unplugged during control.
+      if (!active.Apply(false) && i >= 2) {
+        SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | SDC_TOPOLOGY_EXTEND);
+        DetachLiveVirtual();
+      }
+      if (i >= 9 && MissingPhysicalTarget(active)) {
+        Layout available;
+        if (available.Read(QDC_ONLY_ACTIVE_PATHS) &&
+            KeepPhysicalPaths(available.paths, available.modes) &&
+            available.Apply(true) && available.Matches(QDC_ONLY_ACTIVE_PATHS) &&
+            available.Matches(QDC_DATABASE_CURRENT)) {
+          LOG_WARN("Tablet display: restored available physical outputs after hotplug");
+          return 0;
+        }
+      }
+      if (i == 2 || i % 60 == 59) LOG_WARN("Tablet display: retrying display layout restoration");
+      Sleep(i < 5 ? 350 : 2000);
+    }
   }
 
   static void RemoveIdleVirtualDisplay() {
@@ -226,8 +242,10 @@ class WindowsSingleDisplayGuard {
           count == 0) return false;
       paths->resize(count);
       modes->resize(mode_count ? mode_count : 1);
+      DISPLAYCONFIG_TOPOLOGY_ID topology{};
       const LONG status = QueryDisplayConfig(flags, &count, paths->data(),
-                                             &mode_count, modes->data(), nullptr);
+                                             &mode_count, modes->data(),
+                                             flags == QDC_DATABASE_CURRENT ? &topology : nullptr);
       if (status == ERROR_INSUFFICIENT_BUFFER) continue;
       if (status != ERROR_SUCCESS) return false;
       paths->resize(count);
@@ -337,12 +355,66 @@ class WindowsSingleDisplayGuard {
     return std::nullopt;
   }
 
-  bool ApplyVirtualTopology() {
+  struct Layout {
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths;
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes;
+
+    bool Read(UINT32 flags) { return ReadTopology(flags, &paths, &modes); }
+    LONG Set(UINT32 flags) {
+      return SetDisplayConfig(static_cast<UINT32>(paths.size()), paths.data(),
+                              static_cast<UINT32>(modes.size()), modes.data(), kConfig | flags);
+    }
+    bool Validate() { return Set(SDC_VALIDATE) == ERROR_SUCCESS; }
+    bool Apply(bool persist) { return Set(SDC_APPLY | (persist ? SDC_SAVE_TO_DATABASE : 0)) == ERROR_SUCCESS; }
+
+    bool Matches(UINT32 query) const {
+      Layout actual;
+      if (!actual.Read(query) || actual.paths.size() != paths.size()) return false;
+      for (const auto& path : paths) {
+        auto found = std::find_if(actual.paths.begin(), actual.paths.end(), [&](const auto& p) {
+          return SameTarget(p, path);
+        });
+        if (found == actual.paths.end() || found->targetInfo.rotation != path.targetInfo.rotation ||
+            path.sourceInfo.modeInfoIdx >= modes.size() ||
+            found->sourceInfo.modeInfoIdx >= actual.modes.size()) return false;
+        const auto& rate = path.targetInfo.refreshRate;
+        const auto& actual_rate = found->targetInfo.refreshRate;
+        if (rate.Numerator && rate.Denominator && actual_rate.Numerator && actual_rate.Denominator &&
+            uint64_t(rate.Numerator) * actual_rate.Denominator !=
+                uint64_t(actual_rate.Numerator) * rate.Denominator) return false;
+        if (modes[path.sourceInfo.modeInfoIdx].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE ||
+            actual.modes[found->sourceInfo.modeInfoIdx].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
+          return false;
+        const auto& a = modes[path.sourceInfo.modeInfoIdx].sourceMode;
+        const auto& b = actual.modes[found->sourceInfo.modeInfoIdx].sourceMode;
+        if (a.width != b.width || a.height != b.height ||
+            a.position.x != b.position.x || a.position.y != b.position.y) return false;
+      }
+      return true;
+    }
+  };
+
+  static bool SameTarget(const DISPLAYCONFIG_PATH_INFO& a, const DISPLAYCONFIG_PATH_INFO& b) {
+    return a.targetInfo.id == b.targetInfo.id &&
+           a.targetInfo.adapterId.HighPart == b.targetInfo.adapterId.HighPart &&
+           a.targetInfo.adapterId.LowPart == b.targetInfo.adapterId.LowPart;
+  }
+  static bool MissingPhysicalTarget(const Layout& before) {
+    Layout all;
+    if (!all.Read(QDC_ALL_PATHS)) return false;
+    return std::any_of(before.paths.begin(), before.paths.end(), [&](const auto& path) {
+      return !IsMttVdd(path) && std::none_of(all.paths.begin(), all.paths.end(), [&](const auto& p) {
+        return p.targetInfo.targetAvailable && SameTarget(p, path);
+      });
+    });
+  }
+
+  static bool ApplyVirtualTopology() {
     auto target = FindVirtualPath();
     if (!target) return false;
     target->flags |= DISPLAYCONFIG_PATH_ACTIVE;
+    target->sourceInfo.modeInfoIdx = 0;
     target->targetInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
-
     DISPLAYCONFIG_MODE_INFO mode{};
     mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
     mode.id = target->sourceInfo.id;
@@ -350,62 +422,20 @@ class WindowsSingleDisplayGuard {
     mode.sourceMode.width = kWidth;
     mode.sourceMode.height = kHeight;
     mode.sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
-
-    // Some dual-screen setups reactivate physical outputs after an exclusive
-    // switch. Preserve their original modes and add only the MttVDD output.
-    std::vector<DISPLAYCONFIG_PATH_INFO> paths;
-    std::vector<DISPLAYCONFIG_MODE_INFO> modes;
-    if (keep_physical_outputs_) {
-      paths = saved_paths_;
-      modes = saved_modes_;
-      int64_t right_edge = 0;
-      LONG top = 0;
-      for (const auto& path : paths) {
-        const auto index = path.sourceInfo.modeInfoIdx;
-        if (index >= modes.size() || modes[index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
-          return false;
-        const auto& source = modes[index].sourceMode;
-        const auto edge = static_cast<int64_t>(source.position.x) + source.width;
-        if (edge > right_edge) {
-          right_edge = edge;
-          top = source.position.y;
-        }
-      }
-      // Keep the physical monitors adjacent in their existing arrangement.
-      // The tablet at the origin gets Explorer's main taskbar.
-      for (auto& entry : modes) {
-        if (entry.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE) continue;
-        auto& position = entry.sourceMode.position;
-        const int64_t x = static_cast<int64_t>(position.x) - right_edge;
-        const int64_t y = static_cast<int64_t>(position.y) - top;
-        if (x < INT32_MIN || x > INT32_MAX || y < INT32_MIN || y > INT32_MAX)
-          return false;
-        position = {static_cast<LONG>(x), static_cast<LONG>(y)};
-      }
-    }
-    target->sourceInfo.modeInfoIdx = static_cast<UINT32>(modes.size());
-    paths.push_back(*target);
-    modes.push_back(mode);
-    const auto path_count = static_cast<UINT32>(paths.size());
-    const auto mode_count = static_cast<UINT32>(modes.size());
-    LONG status = SetDisplayConfig(path_count, paths.data(), mode_count,
-                                   modes.data(), SDC_VALIDATE | kConfig);
-    if (status == ERROR_SUCCESS)
-      status = SetDisplayConfig(path_count, paths.data(), mode_count,
-                                modes.data(), SDC_APPLY | kConfig);
+    Layout exclusive{{*target}, {mode}};
+    auto status = exclusive.Set(SDC_VALIDATE);
+    if (status == ERROR_SUCCESS) status = exclusive.Set(SDC_APPLY | SDC_SAVE_TO_DATABASE);
     if (status != ERROR_SUCCESS) {
       LOG_WARN("Tablet display: SetDisplayConfig failed, status={}", status);
       return false;
     }
-    changed_ = true;
     return true;
   }
 
-  std::optional<DISPLAYCONFIG_PATH_INFO> ActiveVirtualSource() const {
+  static std::optional<DISPLAYCONFIG_PATH_INFO> ActiveVirtualSource(UINT32 query = QDC_ONLY_ACTIVE_PATHS) {
     std::vector<DISPLAYCONFIG_PATH_INFO> paths;
     std::vector<DISPLAYCONFIG_MODE_INFO> modes;
-    if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes)) return {};
-    if (!keep_physical_outputs_ && paths.size() != 1) return {};
+    if (!ReadTopology(query, &paths, &modes) || paths.size() != 1) return {};
     const auto target = std::find_if(paths.begin(), paths.end(), IsMttVdd);
     if (target == paths.end() || std::any_of(std::next(target), paths.end(), IsMttVdd))
       return {};
@@ -427,62 +457,25 @@ class WindowsSingleDisplayGuard {
   bool Fail(const char* message) {
     LOG_WARN("Tablet display: {}; video and input remain paused", message);
     capture_display_.clear();
-    switching_ = false;
     next_probe_ = GetTickCount64() + 2000;
-    RestoreTopology();
+    Restore();
     return false;
   }
 
-  static std::wstring TargetPath(const DISPLAYCONFIG_PATH_INFO& path) {
-    DISPLAYCONFIG_TARGET_DEVICE_NAME name{};
-    name.header = {DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME, sizeof(name),
-                   path.targetInfo.adapterId, path.targetInfo.id};
-    return DisplayConfigGetDeviceInfo(&name.header) == ERROR_SUCCESS
-        ? name.monitorDevicePath : L"";
-  }
-
-  static bool DetachLiveVirtual(const std::wstring& primary = {}) {
+  static bool DetachLiveVirtual() {
     std::vector<DISPLAYCONFIG_PATH_INFO> paths;
     std::vector<DISPLAYCONFIG_MODE_INFO> modes;
     if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes)) return false;
-    // If the driver re-enumerated its sources, prefer the saved physical
-    // monitor by its device path when rebasing the live remaining group.
-    if (!primary.empty()) {
-      auto found = std::find_if(paths.begin(), paths.end(), [&](const auto& p) {
-        return TargetPath(p) == primary;
-      });
-      if (found != paths.end()) std::rotate(paths.begin(), found, std::next(found));
-    }
     const auto count = paths.size();
     if (!KeepPhysicalPaths(paths, modes)) return false;
     return count == paths.size() || ApplyPhysicalTopology(paths, modes);
   }
 
-  bool RestoreTopology() {
-    if (changed_) {
-      // In extended mode physical paths stayed live. Their adapter IDs may
-      // have been regenerated after lock/unlock or HDMI changes.
-      if (!ApplyPhysicalTopology(saved_paths_, saved_modes_) &&
-          !DetachLiveVirtual(saved_primary_)) return false;
-      changed_ = false;
-    }
-    saved_paths_.clear();
-    saved_modes_.clear();
-    return true;
-  }
-
-  HANDLE lease_ = nullptr;
-  bool attempted_ = false;
-  bool switching_ = false;
-  bool changed_ = false;
-  bool keep_physical_outputs_ = false;
+  TabletDisplayProcess worker_;
+  bool stopping_ = false;
   ULONGLONG next_probe_ = 0;
   ULONGLONG deadline_ = 0;
-  ULONGLONG stable_since_ = 0;
-  std::wstring saved_primary_;
   std::string capture_display_;
-  std::vector<DISPLAYCONFIG_PATH_INFO> saved_paths_;
-  std::vector<DISPLAYCONFIG_MODE_INFO> saved_modes_;
 };
 
 }  // namespace crossdesk
