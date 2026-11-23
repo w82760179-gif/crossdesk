@@ -50,6 +50,12 @@ public:
   void OnControllerConnectionsChanged() {
     cursor_capture_dirty_.store(true, std::memory_order_relaxed);
   }
+  void WakeDisplayForRemoteSession() {
+    ScreenSharingPower::WakeDisplay();
+#ifdef _WIN32
+    wake_display_pending_.store(true, std::memory_order_relaxed);
+#endif
+  }
   void DestroyDevices();
   void DestroyFactories();
 
@@ -148,6 +154,8 @@ private:
   std::atomic<bool> tablet_required_{true};
   std::atomic<bool> tablet_desktop_ready_{false};
   std::atomic<bool> tablet_secure_capture_{false};
+  std::atomic<bool> wake_display_pending_{false};
+  std::chrono::steady_clock::time_point last_display_wake_{};
   std::string requested_windows_display_;
   std::string initialized_windows_display_;
 #endif

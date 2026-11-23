@@ -546,8 +546,10 @@ void PeerEventHandler::DispatchConnectionStatus(MiniRtcConnectionStatus status,
         runtime->need_to_create_server_window_.store(true,
                                                      std::memory_order_release);
         runtime->is_server_mode_ = true;
-        if (!runtime->managed_host_frontend_ || handler->IsDirect())
+        if (!runtime->managed_host_frontend_ || handler->IsDirect()) {
+          runtime->devices_.WakeDisplayForRemoteSession();
           runtime->start_screen_capturer_ = true;
+        }
         runtime->devices_.StartSpeakerCapturer();
         runtime->remote_client_id_ = remote_id;
         if (!runtime->managed_host_frontend_ || handler->IsDirect())

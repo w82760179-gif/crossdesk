@@ -80,6 +80,9 @@ struct ScreenSharingPower::Impl {
     display = PowerSetRequest(request, PowerRequestDisplayRequired) != 0;
     if (!display)
       LOG_WARN("Cannot prevent display idle sleep: {}", GetLastError());
+    // PowerSetRequest only prevents future idle sleep; issue a one-shot wake
+    // so a host already in Windows Modern Standby (S0) resumes DWM immediately.
+    SetThreadExecutionState(ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
   }
 
   void Stop() {
@@ -246,6 +249,21 @@ void ScreenSharingPower::SetSharing(bool sharing, bool keep_display_awake) {
   } else {
     LOG_INFO("Released screen sharing power inhibitors");
   }
+}
+
+void ScreenSharingPower::WakeDisplay() {
+#ifdef _WIN32
+  // PowerSetRequest cannot exit Windows Modern Standby (S0 Low Power Idle).
+  // A one-shot SetThreadExecutionState explicitly wakes the display/DWM
+  // subsystem without permanently overriding idle sleep after disconnect.
+  const EXECUTION_STATE prev =
+      SetThreadExecutionState(ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
+  if (prev == 0) {
+    LOG_WARN("Failed to wake Windows display from standby: {}", GetLastError());
+  } else {
+    LOG_INFO("Requested Windows display wake from standby");
+  }
+#endif
 }
 
 }  // namespace crossdesk

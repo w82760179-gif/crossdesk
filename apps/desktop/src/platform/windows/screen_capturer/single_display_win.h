@@ -209,6 +209,10 @@ class WindowsSingleDisplayGuard {
 
   static constexpr UINT32 kWidth = 3000;
   static constexpr UINT32 kHeight = 2120;
+  static constexpr UINT32 kHighWidth = 2400;
+  static constexpr UINT32 kHighHeight = 1696;
+  static constexpr UINT32 kCompactWidth = 1650;
+  static constexpr UINT32 kCompactHeight = 1166;
   static constexpr int kScales[] = {100, 125, 150, 175, 200, 225,
                                     250, 300, 350, 400, 450, 500};
   // Windows uses private DisplayConfig packet types for per-source DPI.
@@ -422,21 +426,45 @@ class WindowsSingleDisplayGuard {
     mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
     mode.id = target->sourceInfo.id;
     mode.adapterId = target->sourceInfo.adapterId;
-    // The native-size preset remains available on existing installations.
+    // 7:5 tablet presets matched to MttVDD modes: default 2400x1696; override
+    // via tablet-display.ini [tablet] width=1650 | 2400 | 3000.
     wchar_t module[32768]{};
     DWORD length = GetModuleFileNameW(nullptr, module, 32768);
     auto config = std::filesystem::path(module).parent_path() / L"tablet-display.ini";
-    bool native = length && GetPrivateProfileIntW(L"tablet", L"width", 1650, config.c_str()) == 3000;
-    mode.sourceMode.width = native ? kWidth : 1650;
-    mode.sourceMode.height = native ? kHeight : 1166;
+    const UINT32 configured_width =
+        length ? GetPrivateProfileIntW(L"tablet", L"width", kHighWidth, config.c_str())
+               : kHighWidth;
+    if (configured_width == kWidth) {
+      mode.sourceMode.width = kWidth;
+      mode.sourceMode.height = kHeight;
+    } else if (configured_width == kCompactWidth) {
+      mode.sourceMode.width = kCompactWidth;
+      mode.sourceMode.height = kCompactHeight;
+    } else {
+      mode.sourceMode.width = kHighWidth;
+      mode.sourceMode.height = kHighHeight;
+    }
     mode.sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
     Layout exclusive{{*target}, {mode}};
     auto status = exclusive.Set(SDC_VALIDATE);
+    if (status != ERROR_SUCCESS &&
+        (mode.sourceMode.width != kCompactWidth ||
+         mode.sourceMode.height != kCompactHeight)) {
+      LOG_WARN("Tablet display: {}x{} validation failed (status={}), falling back to {}x{}",
+               mode.sourceMode.width, mode.sourceMode.height, status,
+               kCompactWidth, kCompactHeight);
+      mode.sourceMode.width = kCompactWidth;
+      mode.sourceMode.height = kCompactHeight;
+      exclusive = Layout{{*target}, {mode}};
+      status = exclusive.Set(SDC_VALIDATE);
+    }
     if (status == ERROR_SUCCESS) status = exclusive.Set(SDC_APPLY | SDC_SAVE_TO_DATABASE);
     if (status != ERROR_SUCCESS) {
       LOG_WARN("Tablet display: SetDisplayConfig failed, status={}", status);
       return false;
     }
+    LOG_INFO("Tablet display: applied {}x{} exclusive mode",
+             mode.sourceMode.width, mode.sourceMode.height);
     return true;
   }
 
@@ -452,7 +480,8 @@ class WindowsSingleDisplayGuard {
       return {};
     const auto& mode = modes[index].sourceMode;
     if (!((mode.width == kWidth && mode.height == kHeight) ||
-          (mode.width == 1650 && mode.height == 1166)) ||
+          (mode.width == kHighWidth && mode.height == kHighHeight) ||
+          (mode.width == kCompactWidth && mode.height == kCompactHeight)) ||
         mode.position.x != 0 || mode.position.y != 0)
       return {};
     return *target;

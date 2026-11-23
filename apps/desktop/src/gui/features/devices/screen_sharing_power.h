@@ -21,6 +21,8 @@ class ScreenSharingPower {
   ScreenSharingPower& operator=(const ScreenSharingPower&) = delete;
 
   void SetSharing(bool sharing, bool keep_display_awake = true);
+  // Thread-safe one-shot display/system wake (exits Windows Modern Standby S0).
+  static void WakeDisplay();
 
  private:
   struct Impl;

@@ -342,9 +342,13 @@ void SessionDeviceManager::UpdateScreenSharingPower() {
   // justify keeping the host awake; an outgoing viewing session does not.
   bool keep_display_awake = true;
 #ifdef _WIN32
-  // The tablet has its own display. A remote session must not request that
-  // Windows light up the host monitors to keep the machine awake.
-  keep_display_awake = !tablet_required_.load();
+  // Keep DWM awake while capturing the lock/secure desktop or while the
+  // exclusive virtual display is active (physical monitors are already
+  // detached). Without DisplayRequired, Windows Modern Standby (S0) suspends
+  // DWM compositing after VIDEOCONLOCK (~32s) and stalls remote frames.
+  keep_display_awake = !tablet_required_.load() ||
+                       tablet_secure_capture_.load() ||
+                       tablet_desktop_ready_.load();
 #endif
   screen_sharing_power_.SetSharing(owner_.screen_capturer_is_started_ &&
                                    HasConnectedController(), keep_display_awake);
@@ -755,6 +759,24 @@ void SessionDeviceManager::UpdateInteractions() {
   tablet_desktop_ready_.store(
       desktop_ready && screen_capturer_ && !requested_windows_display_.empty() &&
       requested_windows_display_ == initialized_windows_display_);
+#endif
+#ifdef _WIN32
+  if (HasConnectedController()) {
+    const auto wake_now = std::chrono::steady_clock::now();
+    const bool pending_wake =
+        wake_display_pending_.exchange(false, std::memory_order_relaxed);
+    const bool waiting_for_capture =
+        owner_.start_screen_capturer_ && !owner_.screen_capturer_is_started_ &&
+        (last_display_wake_ == std::chrono::steady_clock::time_point{} ||
+         wake_now - last_display_wake_ >= std::chrono::seconds(5));
+    if (pending_wake || waiting_for_capture) {
+      ScreenSharingPower::WakeDisplay();
+      last_display_wake_ = wake_now;
+    }
+  } else {
+    wake_display_pending_.store(false, std::memory_order_relaxed);
+    last_display_wake_ = {};
+  }
 #endif
   // Release even when pending remote-input cleanup makes this tick return early.
   UpdateScreenSharingPower();
