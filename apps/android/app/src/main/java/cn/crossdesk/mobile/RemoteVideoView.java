@@ -37,8 +37,14 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     private long touchRevision;
     private boolean suppressPointerGesture;
     private boolean captureMouse = true;
-    private int capturedButtons = 0;
-    void setRelative(boolean value) { releaseMouse(); relative=value; }
+    private int hardwareButtons;
+    private boolean systemCursor;
+    private void useSystemCursor(boolean value) {
+        if (systemCursor == value) return;
+        systemCursor = value;
+        cursor.invalidate();
+    }
+    void setRelative(boolean value) { releaseMouse(); relative=value; if (!value) releasePointerCaptureSafe(); }
     void setFillScreen(boolean value) {
         if (viewport.fillScreen() == value) return;
         viewport.setFillScreen(value);
@@ -50,7 +56,7 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         if (!value) releasePointerCaptureSafe();
     }
     void releasePointerCaptureSafe() {
-        capturedButtons = 0;
+        updateHardwareButtons(0);
         if (android.os.Build.VERSION.SDK_INT >= 26 && hasPointerCapture()) {
             releasePointerCapture();
         }
@@ -62,7 +68,7 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     Rect pictureInPictureBounds() {
         Rect bounds=new Rect();video.getGlobalVisibleRect(bounds);return bounds;
     }
-    void releaseMouse() { mouseInput.releaseAll(); dragging=false; suppressPointerGesture=true; }
+    void releaseMouse() { updateHardwareButtons(0); mouseInput.releaseAll(); dragging=false; suppressPointerGesture=true; }
     private boolean suppressPointerGesture() {
         return suppressPointerGesture || mouseInput.hasVirtualButton() || touchRevision != mouseInput.revision();
     }
@@ -116,14 +122,8 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         });
         scales.setQuickScaleEnabled(false);
         scales.setStylusScaleEnabled(false);
-        cursor.setOnGenericMotionListener((v, event) -> {
-            if (!point(event)) return true;
-            if (event.getActionMasked() == MotionEvent.ACTION_SCROLL) {
-                float delta = event.getAxisValue(MotionEvent.AXIS_VSCROLL);
-                if (delta != 0) session.pointer(x, y, 7, delta > 0 ? 1 : -1);
-            }
-            return true;
-        });
+        cursor.setOnGenericMotionListener((v, event) -> isHardwareMouse(event)
+            ? hardwareMouse(event) : point(event));
         setContentDescription(L10n.tr("远程桌面：轻触点击，拖动移动，长按右键，双指捏合缩放，放大后双指拖动画面，原始比例下双指上下滑动滚动"));
     }
     void videoSize(int width, int height) {
@@ -166,10 +166,11 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         this.x = x; this.y = y;
         if((flag==1||flag==3||flag==5)&&remoteFocusChanged!=null)remoteFocusChanged.run();
         session.pointer(x,y,flag,wheel);
-        cursor.invalidate();
+        if (!systemCursor) cursor.invalidate();
     }
     @Override protected void onSizeChanged(int w,int h,int oldw,int oldh) { post(this::fit); }
     private void moveRelative(float dx, float dy) {
+        useSystemCursor(false);
         if (pictureInPicture || viewport.width() <= 0 || viewport.height() <= 0) return;
         viewport.panForPointer(y, dy);
         applyViewport();
@@ -190,26 +191,19 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
             y=viewport.normalizedY(py);
         }
         lastX=px;lastY=py;
-        mouseInput.move(x,y); cursor.invalidate();
+        mouseInput.move(x,y);
         return true;
     }
     private void click(int down, int up) { mouseInput.click(down,up); }
     private boolean touch(MotionEvent e) {
+        if (isHardwareMouse(e)) return hardwareMouse(e);
+        useSystemCursor(false);
         int action = e.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             twoFinger = viewportGesture = viewportPanActive = false;
             touchRevision = mouseInput.revision();
             suppressPointerGesture = mouseInput.hasVirtualButton();
-            int tool = e.getToolType(0);
-            if (tool == MotionEvent.TOOL_TYPE_MOUSE && captureMouse && !pictureInPicture &&
-                android.os.Build.VERSION.SDK_INT >= 26 && !hasPointerCapture()) {
-                point(e);
-                requestFocus();
-                requestPointerCapture();
-            } else if (tool == MotionEvent.TOOL_TYPE_FINGER &&
-                android.os.Build.VERSION.SDK_INT >= 26 && hasPointerCapture()) {
-                releasePointerCaptureSafe();
-            }
+            if (hasPointerCapture()) releasePointerCaptureSafe();
         }
         if (action == MotionEvent.ACTION_POINTER_DOWN) {
             if (dragging) { mouseInput.gestureLeft(false); dragging = false; }
@@ -268,58 +262,68 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     @Override public void surfaceCreated(SurfaceHolder holder) { session.surface(holder.getSurface()); }
     @Override public void surfaceChanged(SurfaceHolder holder,int format,int width,int height) { }
     @Override public void surfaceDestroyed(SurfaceHolder holder) { releaseMouse(); session.surface(null); }
-    @Override public boolean onGenericMotionEvent(MotionEvent e) {
-        if (pictureInPicture) return super.onGenericMotionEvent(e);
-        if ((e.getSource() & android.view.InputDevice.SOURCE_MOUSE) != 0 ||
-            e.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE) {
-            int action = e.getActionMasked();
-            if (action == MotionEvent.ACTION_HOVER_MOVE) {
-                if (viewport.width() > 0 && viewport.height() > 0) {
-                    x = viewport.normalizedX(e.getX());
-                    y = viewport.normalizedY(e.getY());
-                    mouseInput.move(x, y);
-                    cursor.invalidate();
-                }
-                return true;
-            }
-            if (action == MotionEvent.ACTION_SCROLL) {
-                float v = e.getAxisValue(MotionEvent.AXIS_VSCROLL);
-                if (v != 0) session.pointer(x, y, 7, v > 0 ? 1 : -1);
-                return true;
-            }
-        }
-        return super.onGenericMotionEvent(e);
+    private static boolean isHardwareMouse(MotionEvent e) {
+        return e.isFromSource(android.view.InputDevice.SOURCE_MOUSE)
+            || e.getToolType(0) == MotionEvent.TOOL_TYPE_MOUSE;
     }
-    @Override public boolean onCapturedPointerEvent(MotionEvent e) {
-        if (pictureInPicture || viewport.width() <= 0 || viewport.height() <= 0) return true;
-        int action = e.getActionMasked();
-        if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_HOVER_MOVE) {
-            float dx = e.getX();
-            float dy = e.getY();
-            if (dx != 0 || dy != 0) {
-                x = Math.max(0f, Math.min(1f, x + dx / viewport.width()));
-                y = Math.max(0f, Math.min(1f, y + dy / viewport.height()));
-                mouseInput.move(x, y);
-                cursor.invalidate();
-            }
+    private void updateHardwareButtons(int buttons) {
+        int changed = buttons ^ hardwareButtons;
+        hardwareButtons = buttons;
+        for (int button = 0; button < 3; button++) {
+            int mask = 1 << button;
+            if ((changed & mask) == 0) continue;
+            boolean down = (buttons & mask) != 0;
+            if (down && remoteFocusChanged != null) remoteFocusChanged.run();
+            session.pointer(x, y, button * 2 + (down ? 1 : 2), 0);
         }
-        if (action == MotionEvent.ACTION_SCROLL) {
-            float v = e.getAxisValue(MotionEvent.AXIS_VSCROLL);
-            if (v != 0) session.pointer(x, y, 7, v > 0 ? 1 : -1);
+    }
+    private boolean hardwareMouse(MotionEvent e) {
+        if (pictureInPicture) return false;
+        int action = e.getActionMasked();
+        if (action == MotionEvent.ACTION_CANCEL) {
+            updateHardwareButtons(0);
             return true;
         }
-        int buttons = e.getButtonState();
-        int changed = buttons ^ capturedButtons;
-        if (changed != 0) {
-            if ((changed & MotionEvent.BUTTON_PRIMARY) != 0)
-                session.pointer(x, y, (buttons & MotionEvent.BUTTON_PRIMARY) != 0 ? 1 : 2, 0);
-            if ((changed & MotionEvent.BUTTON_SECONDARY) != 0)
-                session.pointer(x, y, (buttons & MotionEvent.BUTTON_SECONDARY) != 0 ? 3 : 4, 0);
-            if ((changed & MotionEvent.BUTTON_TERTIARY) != 0)
-                session.pointer(x, y, (buttons & MotionEvent.BUTTON_TERTIARY) != 0 ? 5 : 6, 0);
-            capturedButtons = buttons;
-            cursor.invalidate();
+        if (action == MotionEvent.ACTION_HOVER_EXIT) return true;
+        if (viewport.width() <= 0 || viewport.height() <= 0) return true;
+        boolean inside = viewport.contains(e.getX(), e.getY());
+        if (!inside && hardwareButtons == 0) return true;
+        // Android composites its own absolute pointer independently of the video.
+        useSystemCursor(true);
+        mouseInput.move(viewport.normalizedX(e.getX()), viewport.normalizedY(e.getY()));
+        updateHardwareButtons(e.getButtonState());
+        if (action == MotionEvent.ACTION_DOWN && relative && captureMouse && !hasPointerCapture()) {
+            requestFocus();
+            requestPointerCapture();
         }
+        if (action == MotionEvent.ACTION_SCROLL) sendWheel(e);
+        return true;
+    }
+    private void sendWheel(MotionEvent e) {
+        float amount = e.getAxisValue(MotionEvent.AXIS_VSCROLL);
+        if (amount != 0) session.pointer(x, y, 7, amount > 0 ? 1 : -1);
+    }
+    @Override public boolean onGenericMotionEvent(MotionEvent e) {
+        return isHardwareMouse(e) ? hardwareMouse(e) : super.onGenericMotionEvent(e);
+    }
+    @Override public void onPointerCaptureChange(boolean captured) {
+        super.onPointerCaptureChange(captured);
+        if (captured) useSystemCursor(false);
+        else updateHardwareButtons(0);
+    }
+    @Override public boolean onCapturedPointerEvent(MotionEvent e) {
+        if (pictureInPicture || !relative || viewport.width() <= 0 || viewport.height() <= 0) return true;
+        int action = e.getActionMasked();
+        if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_HOVER_MOVE) {
+            float dx = e.getX(), dy = e.getY();
+            for (int i = 0; i < e.getHistorySize(); i++) {
+                dx += e.getHistoricalX(i);
+                dy += e.getHistoricalY(i);
+            }
+            mouseInput.move(x + dx / viewport.width(), y + dy / viewport.height());
+        }
+        updateHardwareButtons(action == MotionEvent.ACTION_CANCEL ? 0 : e.getButtonState());
+        if (action == MotionEvent.ACTION_SCROLL) sendWheel(e);
         return true;
     }
     @Override protected void onDetachedFromWindow() { releasePointerCaptureSafe(); releaseMouse(); super.onDetachedFromWindow(); }
@@ -343,7 +347,11 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         @android.annotation.SuppressLint("ClickableViewAccessibility")
         @Override public boolean onTouchEvent(MotionEvent event) { return touch(event); }
         @Override public boolean performClick() { super.performClick(); click(1, 2); return true; }
+        @Override public boolean onHoverEvent(MotionEvent e) {
+            return isHardwareMouse(e) ? hardwareMouse(e) : super.onHoverEvent(e);
+        }
         @Override protected void onDraw(Canvas canvas) {
+            if (systemCursor) return;
             int saved=canvas.save();
             canvas.translate(viewport.left()+x*viewport.width(),viewport.top()+y*viewport.height());
             float density=getResources().getDisplayMetrics().density;canvas.scale(density,density);

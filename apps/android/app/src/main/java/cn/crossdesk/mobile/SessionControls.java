@@ -62,7 +62,7 @@ final class SessionControls extends FrameLayout {
     private LinearLayout[] trafficRows;
     private TextView[] networkDetails;
     private View encryptionLock,encryptionOpen;
-    private boolean muted,relative=true,orbPositioned,secureAttentionVisible;
+    private boolean muted,relative,orbPositioned,secureAttentionVisible;
     private boolean displayScalingAvailable;
     private boolean virtualScalePending;
     private int virtualScalePercent;

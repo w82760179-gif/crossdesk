@@ -170,7 +170,11 @@ final class NativeSession implements AutoCloseable {
         Files.write(output.toPath(), pem.toString().getBytes(StandardCharsets.US_ASCII));
         return output;
     }
-    private void execute(Runnable task) { RTC.execute(() -> { if (!closed) task.run(); }); }
+    private final OrderedPointerQueue inputQueue = new OrderedPointerQueue(RTC,
+        (x, y) -> { if (!closed && connected) nPointer(handle, x, y, 0, 0); });
+    private void execute(Runnable task) {
+        inputQueue.execute(() -> { if (!closed) task.run(); });
+    }
     private void ui(Runnable task) { main.post(() -> { if (!closed) task.run(); }); }
     private void fail(String reason) { ui(() -> { listener.ended(reason); close(); }); }
     private void tryJoin() {
@@ -297,7 +301,11 @@ final class NativeSession implements AutoCloseable {
         });
     }
     void surface(Surface value) { execute(() -> { surface = value; if (handle != 0) nSurface(handle, value); }); }
-    void pointer(float x, float y, int flag, int wheel) { execute(() -> { if (connected) nPointer(handle, x, y, flag, wheel); }); }
+    void pointer(float x, float y, int flag, int wheel) {
+        if (closed || !connected) return;
+        if (flag == 0) inputQueue.move(x, y);
+        else execute(() -> { if (connected) nPointer(handle, x, y, flag, wheel); });
+    }
     void key(int code, boolean down) { execute(() -> { if (connected) nKey(handle, code, down); }); }
     void chord(int code,int[] modifiers) {
         if(closed||!connected)return;

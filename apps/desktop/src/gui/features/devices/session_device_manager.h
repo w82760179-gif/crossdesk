@@ -71,6 +71,11 @@ public:
     requested_windows_display_ = display;
     return true;
   }
+  void RequireTabletDisplay(bool value) { tablet_required_.store(value); }
+  bool WindowsPointerTargetReady() const {
+    return !tablet_required_.load() || tablet_desktop_ready_.load() ||
+           tablet_secure_capture_.load();
+  }
   bool WindowsTabletDisplayReady() const { return tablet_desktop_ready_.load(); }
   bool OwnsNativeCursor() const;
   void SetNativeCursorPolicy(bool default_enabled, bool current_enabled);
@@ -131,6 +136,7 @@ private:
   ScreenCapturerFactory *screen_capturer_factory_ = nullptr;
   ScreenCapturer *screen_capturer_ = nullptr;
 #ifdef _WIN32
+  std::atomic<bool> tablet_required_{true};
   std::atomic<bool> tablet_desktop_ready_{false};
   std::atomic<bool> tablet_secure_capture_{false};
   std::string requested_windows_display_;

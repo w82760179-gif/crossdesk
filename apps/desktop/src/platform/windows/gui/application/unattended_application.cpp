@@ -87,6 +87,7 @@ int GuiApplication::RunUnattended(void* stop_event) {
   remote_input_.Stop();
   CloseAllRemoteSessions();
   WaitForSessionCleanup();
+  RestoreHostDisplayResolutions(true);
   local_host_.reset();
   keyboard_.ReleaseAllRemotePressedKeys("unattended_host_exit");
   devices_.DestroyDevices();

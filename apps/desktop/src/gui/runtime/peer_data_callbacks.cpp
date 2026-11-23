@@ -59,8 +59,8 @@ bool BuildAbsoluteMousePosition(const std::vector<DisplayInfo> &displays,
 
   const float clamped_x = std::clamp(normalized_x, 0.0f, 1.0f);
   const float clamped_y = std::clamp(normalized_y, 0.0f, 1.0f);
-  *absolute_x_out = static_cast<int>(clamped_x * display.width) + display.left;
-  *absolute_y_out = static_cast<int>(clamped_y * display.height) + display.top;
+  *absolute_x_out = static_cast<int>(clamped_x * (display.width - 1)) + display.left;
+  *absolute_y_out = static_cast<int>(clamped_y * (display.height - 1)) + display.top;
   return true;
 }
 
@@ -677,6 +677,7 @@ InputOutcome GuiRuntime::InjectRemoteMouse(const RemoteAction& remote_action,
                                           int display) {
 #if _WIN32
   if (is_server_mode_) {
+    if (!devices_.WindowsPointerTargetReady()) return InputOutcome::ignored;
     static const bool process_elevated = IsAdministratorProcess();
     std::string response;
     const bool delivered = DispatchDesktopInput(

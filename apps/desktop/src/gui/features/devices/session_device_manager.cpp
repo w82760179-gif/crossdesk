@@ -202,7 +202,7 @@ int SessionDeviceManager::InitializeScreenCapturer() {
 #ifdef _WIN32
         from_secure_desktop =
             ScreenCapturerWin::CurrentFrameIsFromSecureDesktop();
-        if (!owner_.unattended_host_ &&
+        if (tablet_required_.load() &&
             !(from_secure_desktop ? tablet_secure_capture_.load()
                                   : tablet_desktop_ready_.load())) return;
         owner_.host_capture_tick_ = SDL_GetTicks();
@@ -732,7 +732,7 @@ void SessionDeviceManager::UpdateInteractions() {
 #ifdef _WIN32
   // Only the service's secure frames may flow while the user desktop is
   // locked. After unlock, wait for the virtual output before normal video.
-  secure_capture = !desktop_ready && !owner_.unattended_host_ &&
+  secure_capture = !desktop_ready && tablet_required_.load() &&
                    owner_.start_screen_capturer_ && HasConnectedController() &&
                    !IsCurrentSessionUserDesktopActive();
   tablet_secure_capture_.store(secure_capture);
@@ -884,7 +884,7 @@ bool SessionDeviceManager::SupportsTextInput() const {
 
 bool SessionDeviceManager::SendTextCommand(const std::string& text) {
 #ifdef _WIN32
-  if (!owner_.unattended_host_ && !tablet_desktop_ready_.load()) return false;
+  if (tablet_required_.load() && !tablet_desktop_ready_.load()) return false;
 #endif
   return keyboard_capturer_ && keyboard_capturer_->SendTextCommand(text) == 0;
 }
@@ -894,7 +894,7 @@ bool SessionDeviceManager::SendKeyboardCommand(int key_code, bool is_down,
                                                bool extended) {
 #ifdef _WIN32
   // Key-up still has to release an earlier remote key after topology loss.
-  if (is_down && !owner_.unattended_host_ && !tablet_desktop_ready_.load()) return false;
+  if (is_down && tablet_required_.load() && !tablet_desktop_ready_.load()) return false;
 #endif
   return keyboard_capturer_ && keyboard_capturer_->SendKeyboardCommand(
                                    key_code, is_down, scan_code, extended) == 0;
@@ -903,7 +903,7 @@ bool SessionDeviceManager::SendKeyboardCommand(int key_code, bool is_down,
 bool SessionDeviceManager::SendMouseCommand(const RemoteAction &action,
                                             int selected_display) {
 #ifdef _WIN32
-  if (!owner_.unattended_host_ && !tablet_desktop_ready_.load()) return false;
+  if (tablet_required_.load() && !tablet_desktop_ready_.load()) return false;
 #endif
   std::lock_guard lock(mouse_controller_mutex_);
   if (mouse_controller_) {

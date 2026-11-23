@@ -2,6 +2,7 @@
 #define _SINGLE_DISPLAY_WIN_H_
 
 #include <Windows.h>
+#include <sddl.h>
 
 #include <algorithm>
 #include <cstdint>
@@ -20,7 +21,15 @@ namespace crossdesk {
 // virtual desktop is active. Keep the original topology in memory for teardown.
 class WindowsSingleDisplayGuard {
  public:
-  bool Tracked() const { return attempted_ || !saved_paths_.empty(); }
+  bool Tracked() const { return lease_ != nullptr; }
+  static bool DriverPresent() {
+    for (DWORD i = 0;; ++i) {
+      DISPLAY_DEVICEW adapter{};
+      adapter.cb = sizeof(adapter);
+      if (!EnumDisplayDevicesW(nullptr, i, &adapter, 0)) return false;
+      if (IsVirtualAdapter(adapter)) return true;
+    }
+  }
   const std::string& capture_display() const { return capture_display_; }
 
   struct Scale {
@@ -66,12 +75,16 @@ class WindowsSingleDisplayGuard {
 
   bool Update() {
     const auto now = GetTickCount64();
+    if (!lease_) {
+      if (now < next_probe_) return false;
+      lease_ = AcquireLease();
+      if (!lease_) { next_probe_ = now + 1000; return false; }
+    }
     if (attempted_ && !switching_ && capture_display_.empty()) {
-      if (changed_ && now >= next_probe_) {
-        next_probe_ = now + 1000;
-        RestoreTopology();
-      }
-      return false;
+      if (now < next_probe_) return false;
+      next_probe_ = now + 2000;
+      if (!RestoreTopology()) return false;
+      attempted_ = false;
     }
     if (!attempted_) {
       attempted_ = true;
@@ -104,7 +117,7 @@ class WindowsSingleDisplayGuard {
     if (stable_since_ == 0) stable_since_ = now;
     // Some display drivers revert a newly applied topology several seconds
     // later. Wait through that transition before opening either media or input.
-    if (now - stable_since_ < 7000) {
+    if (now - stable_since_ < (keep_physical_outputs_ ? 500u : 7000u)) {
       if (now >= deadline_) return Fail("the virtual screen did not stabilize");
       return false;
     }
@@ -120,6 +133,12 @@ class WindowsSingleDisplayGuard {
     switching_ = false;
     if (!RestoreTopology()) return false;
     attempted_ = false;
+    next_probe_ = 0;
+    if (lease_) {
+      ReleaseMutex(lease_);
+      CloseHandle(lease_);
+      lease_ = nullptr;
+    }
     return true;
   }
 
@@ -129,11 +148,39 @@ class WindowsSingleDisplayGuard {
     if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes)) return;
     const auto active_paths = paths.size();
     if (!KeepPhysicalPaths(paths, modes) || paths.size() == active_paths) return;
-    if (ApplyPhysicalTopology(paths, modes))
+    HANDLE lease = AcquireLease();
+    if (!lease) return;
+    // Re-read under the lease; a new session may have ended since the probe.
+    if (DetachLiveVirtual())
       LOG_INFO("Tablet display: detached an idle virtual output");
+    ReleaseMutex(lease);
+    CloseHandle(lease);
   }
 
  private:
+  // A direct LAN viewer and the service-owned RTC host live in separate
+  // processes on the same interactive desktop. Only the capture owner switches it.
+  static HANDLE AcquireLease() {
+    PSECURITY_DESCRIPTOR sd = nullptr;
+    if (!ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            L"D:(A;;0x100001;;;IU)(A;;0x100001;;;SY)(A;;0x100001;;;BA)",
+            SDDL_REVISION_1, &sd, nullptr)) return nullptr;
+    SECURITY_ATTRIBUTES sa{sizeof(SECURITY_ATTRIBUTES), sd, FALSE};
+    HANDLE handle = CreateMutexExW(&sa, L"Local\\CrossDesk.TabletDisplay", 0,
+                                   SYNCHRONIZE | MUTEX_MODIFY_STATE);
+    LocalFree(sd);
+    if (!handle) return nullptr;
+    DWORD status = WaitForSingleObject(handle, 0);
+    if (status == WAIT_OBJECT_0 || status == WAIT_ABANDONED) return handle;
+    CloseHandle(handle);
+    return nullptr;
+  }
+
+  static bool IsVirtualAdapter(const DISPLAY_DEVICEW& device) {
+    return _wcsicmp(device.DeviceString, L"Virtual Display Driver") == 0 ||
+           _wcsicmp(device.DeviceString, L"MttVDD Virtual Display Driver") == 0;
+  }
+
   static constexpr UINT32 kWidth = 3000;
   static constexpr UINT32 kHeight = 2120;
   static constexpr int kScales[] = {100, 125, 150, 175, 200, 225,
@@ -202,8 +249,7 @@ class WindowsSingleDisplayGuard {
       device.cb = sizeof(device);
       if (!EnumDisplayDevicesW(nullptr, index, &device, 0)) return false;
       if (_wcsicmp(device.DeviceName, name.c_str()) != 0) continue;
-      return _wcsicmp(device.DeviceString, L"Virtual Display Driver") == 0 ||
-             _wcsicmp(device.DeviceString, L"MttVDD Virtual Display Driver") == 0;
+      return IsVirtualAdapter(device);
     }
   }
 
@@ -213,6 +259,22 @@ class WindowsSingleDisplayGuard {
     paths.erase(std::remove_if(paths.begin(), paths.end(), IsMttVdd), paths.end());
     if (paths.empty()) return false;
     if (paths.size() == active_paths) return true;
+    std::vector<DISPLAYCONFIG_MODE_INFO> retained;
+    std::vector<UINT32> indices(modes.size(), DISPLAYCONFIG_PATH_MODE_IDX_INVALID);
+    auto retain = [&](UINT32& index) {
+      if (index == DISPLAYCONFIG_PATH_MODE_IDX_INVALID) return true;
+      if (index >= modes.size()) return false;
+      if (indices[index] == DISPLAYCONFIG_PATH_MODE_IDX_INVALID) {
+        indices[index] = static_cast<UINT32>(retained.size());
+        retained.push_back(modes[index]);
+      }
+      index = indices[index];
+      return true;
+    };
+    for (auto& path : paths)
+      if (!retain(path.sourceInfo.modeInfoIdx) || !retain(path.targetInfo.modeInfoIdx))
+        return false;
+    modes.swap(retained);
 
     // Preserve monitor arrangement. Move the remaining group only if MttVDD
     // owned the origin, since Windows requires a desktop source at (0, 0).
@@ -260,6 +322,8 @@ class WindowsSingleDisplayGuard {
     std::vector<DISPLAYCONFIG_PATH_INFO> paths;
     std::vector<DISPLAYCONFIG_MODE_INFO> modes;
     if (!ReadTopology(QDC_ALL_PATHS, &paths, &modes)) return std::nullopt;
+    for (const auto& path : paths)
+      if ((path.flags & DISPLAYCONFIG_PATH_ACTIVE) && IsMttVdd(path)) return path;
     for (const auto& path : paths) {
       if (path.targetInfo.targetAvailable && IsMttVdd(path)) return path;
     }
@@ -321,8 +385,7 @@ class WindowsSingleDisplayGuard {
     std::vector<DISPLAYCONFIG_PATH_INFO> paths;
     std::vector<DISPLAYCONFIG_MODE_INFO> modes;
     if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes)) return {};
-    const size_t expected = keep_physical_outputs_ ? saved_paths_.size() + 1 : 1;
-    if (paths.size() != expected) return {};
+    if (!keep_physical_outputs_ && paths.size() != 1) return {};
     const auto target = std::find_if(paths.begin(), paths.end(), IsMttVdd);
     if (target == paths.end() || std::any_of(std::next(target), paths.end(), IsMttVdd))
       return {};
@@ -345,13 +408,27 @@ class WindowsSingleDisplayGuard {
     LOG_WARN("Tablet display: {}; video and input remain paused", message);
     capture_display_.clear();
     switching_ = false;
+    next_probe_ = GetTickCount64() + 2000;
     RestoreTopology();
     return false;
   }
 
+  static bool DetachLiveVirtual() {
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths;
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes;
+    if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes)) return false;
+    const auto count = paths.size();
+    if (!KeepPhysicalPaths(paths, modes)) return false;
+    return count == paths.size() || ApplyPhysicalTopology(paths, modes);
+  }
+
   bool RestoreTopology() {
     if (changed_) {
-      if (!ApplyPhysicalTopology(saved_paths_, saved_modes_)) return false;
+      // In extended mode physical paths stayed live. Their adapter IDs may
+      // have been regenerated after lock/unlock or HDMI changes.
+      if (!(keep_physical_outputs_ && DetachLiveVirtual()) &&
+          !ApplyPhysicalTopology(saved_paths_, saved_modes_) &&
+          !DetachLiveVirtual()) return false;
       changed_ = false;
     }
     saved_paths_.clear();
@@ -359,6 +436,7 @@ class WindowsSingleDisplayGuard {
     return true;
   }
 
+  HANDLE lease_ = nullptr;
   bool attempted_ = false;
   bool switching_ = false;
   bool changed_ = false;

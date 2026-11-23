@@ -166,7 +166,7 @@ void GuiRuntime::QueueVirtualDisplayScale(
     const std::string& id, PeerEventHandler* source,
     const RemoteAction::VirtualDisplayScale& request) {
   const auto events = ControllerEvents(id);
-  if (unattended_host_ || events.get() != source || !IsAuthorizedController(id))
+  if (events.get() != source || !IsAuthorizedController(id))
     return;
   std::lock_guard lock(display_resolution_commands_mutex_);
   if (display_scaling_commands_.size() < 8)
@@ -211,9 +211,24 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
   RestoreHostDisplayResolutions();
 #ifdef _WIN32
   HandleVirtualDisplayScale();
-  const bool has_controller = !stopping_ && !unattended_host_ &&
-                              !ConnectedControllers().empty();
-  if (has_controller) {
+  const auto peers = ConnectedControllers();
+  const bool owns_capture = !managed_host_frontend_ ||
+      std::any_of(peers.begin(), peers.end(), [](const auto& id) {
+        return id.rfind("lan/", 0) == 0;
+      });
+  // The attached GUI mirrors cloud connection state for privacy and audio.
+  // Its physical monitor list must never overwrite the capture host's list.
+  if (!owns_capture) {
+    if (windows_single_display_guard.Tracked())
+      RestoreHostDisplayResolutions(true);
+    return true;
+  }
+  if (peers.empty()) service_tablet_driver_.reset();
+  if (unattended_host_ && !peers.empty() && !service_tablet_driver_)
+    service_tablet_driver_ = WindowsSingleDisplayGuard::DriverPresent();
+  const bool tablet = !unattended_host_ || service_tablet_driver_.value_or(false);
+  devices_.RequireTabletDisplay(tablet);
+  if (!stopping_ && tablet && !peers.empty()) {
     if (!IsCurrentSessionUserDesktopActive()) return false;
     std::lock_guard lock(native_display_resolution_mutex);
     if (!windows_single_display_guard.Update()) return false;
@@ -223,7 +238,7 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
       // The device manager reinitializes the capture list after this tick.
       next_display_resolution_poll_ = SDL_GetTicks() + 100;
     }
-  } else if (!stopping_ && !unattended_host_ && !managed_host_frontend_ &&
+  } else if (!stopping_ && peers.empty() && !managed_host_frontend_ &&
              SDL_GetTicks() >= next_idle_virtual_display_check_) {
     next_idle_virtual_display_check_ = SDL_GetTicks() + 2000;
     if (IsCurrentSessionUserDesktopActive()) {
@@ -334,7 +349,7 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
   // optional host-info extension is harmless to pre-feature controllers.
   const auto message = BuildHostInformation();
   for (const auto &id : controllers) {
-    if (IsAuthorizedController(id))
+    if (IsAuthorizedController(id) && (!managed_host_frontend_ || id.rfind("lan/", 0) == 0))
       SendControllerData(id, message.data(), message.size(),
                          control_data_label_.c_str());
   }
