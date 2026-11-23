@@ -152,6 +152,26 @@ final class SessionControls extends FrameLayout {
     }
     void setFillScreen(boolean value){fillScreen=value;}
     void setCaptureMouse(boolean value){captureMouse=value;}
+    RemoteVideoView desktopInput;
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    @Override public boolean onTouchEvent(MotionEvent event) {
+        if(menu==null && desktopInput!=null && desktopInput.touchFromControls(this,event)) return true;
+        return super.onTouchEvent(event);
+    }
+    @Override public boolean onHoverEvent(MotionEvent event) {
+        if(menu==null && desktopInput!=null && desktopInput.touchFromControls(this,event)) return true;
+        return super.onHoverEvent(event);
+    }
+    @Override public boolean onGenericMotionEvent(MotionEvent event) {
+        if(menu==null && desktopInput!=null && event.isFromSource(InputDevice.SOURCE_MOUSE))
+            return desktopInput.touchFromControls(this,event);
+        return super.onGenericMotionEvent(event);
+    }
+    @Override public android.view.PointerIcon onResolvePointerIcon(MotionEvent event,int pointerIndex) {
+        android.view.PointerIcon icon=super.onResolvePointerIcon(event,pointerIndex);
+        if(icon!=null || menu!=null || desktopInput==null)return icon;
+        return android.view.PointerIcon.getSystemIcon(getContext(),android.view.PointerIcon.TYPE_NULL);
+    }
     void setRelative(boolean value){relative=value;if(menu!=null&&menuPage.equals("controls"))openMenu("controls");}
     void setHostPlatform(String platform){
         keyboard.setPlatform(platform);

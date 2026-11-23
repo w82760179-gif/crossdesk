@@ -22,6 +22,9 @@ namespace crossdesk {
 // holds the display lease until both original layouts have been restored.
 class WindowsSingleDisplayGuard {
  public:
+  static bool ExclusiveDesktopActive() {
+    return GetSystemMetrics(SM_CMONITORS) == 1 && ActiveVirtualSource().has_value();
+  }
   bool Tracked() const { return worker_.started(); }
   static bool DriverPresent() {
     for (DWORD i = 0;; ++i) {
@@ -94,7 +97,7 @@ class WindowsSingleDisplayGuard {
     if (active.empty() || (!capture_display_.empty() && active != capture_display_))
       return Fail("exclusive virtual output changed");
     if (capture_display_.empty())
-      LOG_INFO("Tablet display: {} ready at 3000x2120 (exclusive)", active);
+      LOG_INFO("Tablet display: {} ready (exclusive)", active);
     capture_display_ = active;
     return true;
   }
@@ -419,8 +422,13 @@ class WindowsSingleDisplayGuard {
     mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
     mode.id = target->sourceInfo.id;
     mode.adapterId = target->sourceInfo.adapterId;
-    mode.sourceMode.width = kWidth;
-    mode.sourceMode.height = kHeight;
+    // The native-size preset remains available on existing installations.
+    wchar_t module[32768]{};
+    DWORD length = GetModuleFileNameW(nullptr, module, 32768);
+    auto config = std::filesystem::path(module).parent_path() / L"tablet-display.ini";
+    bool native = length && GetPrivateProfileIntW(L"tablet", L"width", 1650, config.c_str()) == 3000;
+    mode.sourceMode.width = native ? kWidth : 1650;
+    mode.sourceMode.height = native ? kHeight : 1166;
     mode.sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
     Layout exclusive{{*target}, {mode}};
     auto status = exclusive.Set(SDC_VALIDATE);
@@ -443,7 +451,8 @@ class WindowsSingleDisplayGuard {
     if (index >= modes.size() || modes[index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
       return {};
     const auto& mode = modes[index].sourceMode;
-    if (mode.width != kWidth || mode.height != kHeight ||
+    if (!((mode.width == kWidth && mode.height == kHeight) ||
+          (mode.width == 1650 && mode.height == 1166)) ||
         mode.position.x != 0 || mode.position.y != 0)
       return {};
     return *target;

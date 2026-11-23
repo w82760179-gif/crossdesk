@@ -191,6 +191,14 @@ void Data(const char* data, size_t size, const char*, size_t,
   const std::string name(stream, stream_size);
   if (name == kFileStream) { ctx->owner->files.Receive(data, size); return; }
   if (name == kFileFeedbackStream) { ctx->owner->files.Ack(data, size); return; }
+  if (name == kMouseStream) {
+    if (size == 0 || size > 16 * 1024) return;
+    const auto event = json::parse(data, data + size, nullptr, false);
+    if (event.is_object() && event.contains("type") && event["type"] == 8 &&
+        event.contains("cursor_state") && event["cursor_state"].is_object())
+      ctx->owner->Event(4, data, size);
+    return;
+  }
   if (name == kControlStream) {
     if (auto proof = ctx->owner->trust->ChallengeResponse(std::string_view(data, size),
             ctx->owner->controller_login.substr(2), "CrossDesk Android")) {
@@ -235,6 +243,7 @@ void RenderVideo(Session* s, VideoPicture picture) {
   std::lock_guard<std::mutex> lock(s->render_mutex);
   if (s->stopping || !s->window || picture.generation != s->video_generation) return;
   const bool size_changed = s->width != w || s->height != h;
+  const bool renderer_changed = s->surface_picture.has_value() != picture.IsSurface();
   if (picture.IsSurface()) {
     if (picture.RenderSurface(s->window) != 0) return;
     // Keep a consumed token to detach the codec before Surface destruction,
@@ -252,9 +261,9 @@ void RenderVideo(Session* s, VideoPicture picture) {
                        static_cast<uint8_t*>(buffer.bits), buffer.stride * 4, w, h) == 0;
     if (ANativeWindow_unlockAndPost(s->window) != 0 || !rendered) return;
   }
-  if (size_changed) {
+  if (size_changed || renderer_changed) {
     s->width = w; s->height = h;
-    s->Event(5, {{"width", w}, {"height", h}});
+    s->Event(5, {{"width", w}, {"height", h}, {"renderer", picture.IsSurface() ? "codec-surface" : "cpu-nv12"}});
   }
   // Measure through display submission, using MiniRTC's calibrated capture clock.
   const auto now = MiniRtcGetSystemTimeMicros(s->controller);
@@ -280,7 +289,7 @@ MiniRtcParams Parameters(Session* s, bool controller) {
   p.video_content_type = MiniRtcVideoContentType::ScreenContent;
   p.video_quality = MiniRtcVideoQualityMedium;
   p.video_frame_rate = 60;
-  p.video_degradation_preference = MiniRtcVideoDegradationPreference::MaintainFrameRate;
+  p.video_degradation_preference = MiniRtcVideoDegradationPreference::MaintainResolution;
   p.on_signal_status = Signal; p.on_connection_status = Connection;
   p.on_signal_message = SignalMessage;
   p.on_net_status_report = Network; p.on_receive_data_buffer = Data;

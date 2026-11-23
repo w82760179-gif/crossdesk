@@ -395,7 +395,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             public void displayResolution(RemoteDisplayResolutions.Mode mode){updateDisplayResolution(mode);}
             public void virtualDisplayScale(int percent){requestVirtualDisplayScale(percent);}
             public void videoSettings(int field,int value){RemoteVideoSettings.Values old=MainActivity.this.videoSettings.selection;updateVideoSettings(new RemoteVideoSettings.Values(field==0?value:old.quality,field==1?value:old.frameRate,field==2?value:old.preference));}
-        });controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);controls.setRelative(preferences.getBoolean("relativeMouse",false));controls.setFillScreen(fillScreen);controls.setCaptureMouse(captureMouse);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });controls.desktopInput=video;controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);controls.setRelative(preferences.getBoolean("relativeMouse",false));controls.setFillScreen(fillScreen);controls.setCaptureMouse(captureMouse);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         controls.attachMouseBar(canvas,new VirtualMouseBar(ui,video.mouseInput));
         privacyChanged();
         video.remoteFocusChanged=()->{if(controls!=null)controls.resetKeyboardContext();};
@@ -761,6 +761,10 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     }
     @Override public void data(JSONObject message){
         if(session==null)return;
+        if(message.optInt("type",-1)==8){
+            if(video!=null)video.hostCursor(message.optJSONObject("cursor_state"));
+            return;
+        }
         if(message.optInt("type",-1)==3||message.optInt("type",-1)==16){
             RemoteDisplayResolutions.Request confirmed=displayResolutions.receive(message);
             if(confirmed!=null&&session!=null)session.rememberDisplayResolution(confirmed.displayKey,confirmed.mode);

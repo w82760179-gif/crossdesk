@@ -42,6 +42,10 @@ private:
     CursorState last_sent{};
     bool has_sent = false;
     bool feedback_pending = false;
+#ifdef _WIN32
+    uintptr_t cursor_handle = 0;
+    std::chrono::steady_clock::time_point pixels_sent{};
+#endif
     std::chrono::steady_clock::time_point last_sent_time{};
   };
 

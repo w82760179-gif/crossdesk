@@ -250,6 +250,7 @@ final class NativeSession implements AutoCloseable {
                 }
                 else if (type == 5) {
                     int width = event.getInt("width"), height = event.getInt("height");
+                    android.util.Log.i("CrossDeskVideo", "video=" + width + "x" + height + " renderer=" + event.optString("renderer"));
                     ui(() -> listener.videoSize(width, height));
                 } else if (type == 7) networkStatistics.receive(new RemoteNetworkStatistics.Report(event),RemoteNetworkStatistics.now());
                 else if (type == 8 && signalReady) ui(() -> listener.announcement(event));

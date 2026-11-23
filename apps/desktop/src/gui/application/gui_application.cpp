@@ -64,6 +64,9 @@
 #include <windows.h>
 
 #include "platform/windows/gui/slint_backend.h"
+#include "platform/windows/input/cursor_pixels.h"
+#include "platform/windows/input/windows_cursor_shape.h"
+#include "platform/windows/screen_capturer/single_display_win.h"
 #include "platform/windows/gui/session_end_observer.h"
 #include "platform/windows/gui/tray/win_tray.h"
 #include "platform/windows/gui/window_icons.h"
@@ -3065,7 +3068,26 @@ void GuiApplication::ShareLocalCursorState() {
     RemoteAction action{};
     action.type = ControlType::cursor_state;
     action.cs = outgoing;
-    const std::string message = action.to_json();
+    std::string message = action.to_json();
+#ifdef _WIN32
+    CURSORINFO info{sizeof(CURSORINFO)};
+    uintptr_t cursor_handle = 0;
+    bool refresh_pixels = false;
+    if (outgoing.render_mode == CursorRenderMode::separate &&
+        GetCursorInfo(&info) && (info.flags & CURSOR_SHOWING) && info.hCursor) {
+      cursor_handle = reinterpret_cast<uintptr_t>(info.hCursor);
+      refresh_pixels = cursor_handle != delivery.cursor_handle || now - delivery.pixels_sent >= 3s;
+      if (refresh_pixels && IsCurrentSessionUserDesktopActive() &&
+          ShapeFromWindowsCursor(info.hCursor) == outgoing.shape) {
+        auto pixels = CursorPixels(info.hCursor);
+        if (!pixels.is_null()) {
+          auto payload = nlohmann::json::parse(message);
+          payload["cursor_state"]["pixels"] = std::move(pixels);
+          message = payload.dump();
+        }
+      }
+    }
+#endif
     const int result = SendControllerData(recipient.remote_id, message.c_str(),
                                           message.size(), mouse_label_.c_str());
     if (result != 0) {
@@ -3080,6 +3102,10 @@ void GuiApplication::ShareLocalCursorState() {
                static_cast<int>(outgoing.render_mode),
                static_cast<int>(outgoing.hidden_reason));
     }
+#ifdef _WIN32
+    delivery.cursor_handle = cursor_handle;
+    if (refresh_pixels) delivery.pixels_sent = now;
+#endif
     delivery.last_sent = outgoing;
     delivery.has_sent = true;
     if (recipient.include_position) {
@@ -4719,7 +4745,11 @@ void GuiApplication::SyncServerWindow() {
 #ifdef _WIN32
   // The panel would otherwise be captured, and its invisible hit area would
   // still intercept tablet input if it were merely excluded from capture.
-  show_controller_window = show_controller_window && !devices_.WindowsTabletDisplayReady();
+  // The attached frontend mirrors a service-owned connection but does not
+  // own its capture device manager. Query the actual desktop in that process.
+  if (show_controller_window && (devices_.WindowsTabletDisplayReady() ||
+      (managed_host_frontend_ && WindowsSingleDisplayGuard::ExclusiveDesktopActive())))
+    show_controller_window = false;
 #endif
 #if !defined(_WIN32) && !defined(__APPLE__) && !(defined(__linux__) && !defined(__OHOS__))
   // Preserve the existing panel behavior on other platforms.

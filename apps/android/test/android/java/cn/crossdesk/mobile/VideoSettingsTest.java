@@ -7,11 +7,12 @@ public class VideoSettingsTest {
     private final RemoteVideoSettings.Values first=new RemoteVideoSettings.Values(1,30,2),second=new RemoteVideoSettings.Values(0,60,1);
     private void same(RemoteVideoSettings.Values expected,RemoteVideoSettings.Values actual){assertEquals(expected.quality,actual.quality);assertEquals(expected.frameRate,actual.frameRate);assertEquals(expected.preference,actual.preference);}
 
-    @Test public void frameRateFirstStartsAtSixtyAndHonorsExplicitQualityPreference(){
+    @Test public void officeDefaultMaintainsResolutionAndHonorsFrameRatePreference(){
         RemoteVideoSettings state=new RemoteVideoSettings(RemoteVideoSettings.DEFAULT_PREFERENCE,3000);
-        same(new RemoteVideoSettings.Values(1,60,0),state.selection);
+        same(new RemoteVideoSettings.Values(1,30,1),state.selection);
+        same(new RemoteVideoSettings.Values(1,60,0),new RemoteVideoSettings(0,3000).selection);
         same(new RemoteVideoSettings.Values(1,30,1),new RemoteVideoSettings(1,3000).selection);
-        same(new RemoteVideoSettings.Values(0,60,0),new RemoteVideoSettings(-1,1280).selection);
+        same(new RemoteVideoSettings.Values(0,30,1),new RemoteVideoSettings(-1,1280).selection);
     }
     @Test public void acknowledgementCommitsAndRejectionRollsBack(){
         RemoteVideoSettings state=new RemoteVideoSettings(1);state.setSupported(true);long id=state.begin(first);assertTrue(state.pending);same(new RemoteVideoSettings.Values(1,30,1),state.applied);

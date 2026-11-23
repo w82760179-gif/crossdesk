@@ -4,7 +4,7 @@ import org.json.JSONObject;
 
 /** Same request/acknowledgement and rollback rules as the iOS controller. */
 final class RemoteVideoSettings {
-    static final int DEFAULT_PREFERENCE = 0;
+    static final int DEFAULT_PREFERENCE = 1;
     static String[] preferences(){return new String[]{L10n.tr("帧率优先"),L10n.tr("画质优先"),L10n.tr("平衡")};}
     static String[] details(){return new String[]{
         L10n.tr("优先保持画面流畅，带宽或编码压力较大时会更积极地降低分辨率。"),
