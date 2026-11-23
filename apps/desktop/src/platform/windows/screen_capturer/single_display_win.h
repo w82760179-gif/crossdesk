@@ -91,6 +91,13 @@ class WindowsSingleDisplayGuard {
       if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &saved_paths_, &saved_modes_) ||
           !KeepPhysicalPaths(saved_paths_, saved_modes_))
         return Fail("could not save a physical display layout");
+      saved_primary_.clear();
+      for (const auto& path : saved_paths_) {
+        const auto index = path.sourceInfo.modeInfoIdx;
+        if (index >= saved_modes_.size()) continue;
+        const auto& p = saved_modes_[index].sourceMode.position;
+        if (p.x == 0 && p.y == 0) { saved_primary_ = TargetPath(path); break; }
+      }
       keep_physical_outputs_ = saved_paths_.size() > 1;
       if (!ApplyVirtualTopology())
         return Fail("MttVDD did not offer an available 3000x2120 display");
@@ -352,16 +359,29 @@ class WindowsSingleDisplayGuard {
       paths = saved_paths_;
       modes = saved_modes_;
       int64_t right_edge = 0;
+      LONG top = 0;
       for (const auto& path : paths) {
         const auto index = path.sourceInfo.modeInfoIdx;
         if (index >= modes.size() || modes[index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
           return false;
         const auto& source = modes[index].sourceMode;
         const auto edge = static_cast<int64_t>(source.position.x) + source.width;
-        if (edge > right_edge) right_edge = edge;
+        if (edge > right_edge) {
+          right_edge = edge;
+          top = source.position.y;
+        }
       }
-      if (right_edge > INT32_MAX - kWidth) return false;
-      mode.sourceMode.position.x = static_cast<LONG>(right_edge);
+      // Keep the physical monitors adjacent in their existing arrangement.
+      // The tablet at the origin gets Explorer's main taskbar.
+      for (auto& entry : modes) {
+        if (entry.infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE) continue;
+        auto& position = entry.sourceMode.position;
+        const int64_t x = static_cast<int64_t>(position.x) - right_edge;
+        const int64_t y = static_cast<int64_t>(position.y) - top;
+        if (x < INT32_MIN || x > INT32_MAX || y < INT32_MIN || y > INT32_MAX)
+          return false;
+        position = {static_cast<LONG>(x), static_cast<LONG>(y)};
+      }
     }
     target->sourceInfo.modeInfoIdx = static_cast<UINT32>(modes.size());
     paths.push_back(*target);
@@ -394,7 +414,7 @@ class WindowsSingleDisplayGuard {
       return {};
     const auto& mode = modes[index].sourceMode;
     if (mode.width != kWidth || mode.height != kHeight ||
-        (!keep_physical_outputs_ && (mode.position.x != 0 || mode.position.y != 0)))
+        mode.position.x != 0 || mode.position.y != 0)
       return {};
     return *target;
   }
@@ -413,10 +433,26 @@ class WindowsSingleDisplayGuard {
     return false;
   }
 
-  static bool DetachLiveVirtual() {
+  static std::wstring TargetPath(const DISPLAYCONFIG_PATH_INFO& path) {
+    DISPLAYCONFIG_TARGET_DEVICE_NAME name{};
+    name.header = {DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME, sizeof(name),
+                   path.targetInfo.adapterId, path.targetInfo.id};
+    return DisplayConfigGetDeviceInfo(&name.header) == ERROR_SUCCESS
+        ? name.monitorDevicePath : L"";
+  }
+
+  static bool DetachLiveVirtual(const std::wstring& primary = {}) {
     std::vector<DISPLAYCONFIG_PATH_INFO> paths;
     std::vector<DISPLAYCONFIG_MODE_INFO> modes;
     if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes)) return false;
+    // If the driver re-enumerated its sources, prefer the saved physical
+    // monitor by its device path when rebasing the live remaining group.
+    if (!primary.empty()) {
+      auto found = std::find_if(paths.begin(), paths.end(), [&](const auto& p) {
+        return TargetPath(p) == primary;
+      });
+      if (found != paths.end()) std::rotate(paths.begin(), found, std::next(found));
+    }
     const auto count = paths.size();
     if (!KeepPhysicalPaths(paths, modes)) return false;
     return count == paths.size() || ApplyPhysicalTopology(paths, modes);
@@ -426,9 +462,8 @@ class WindowsSingleDisplayGuard {
     if (changed_) {
       // In extended mode physical paths stayed live. Their adapter IDs may
       // have been regenerated after lock/unlock or HDMI changes.
-      if (!(keep_physical_outputs_ && DetachLiveVirtual()) &&
-          !ApplyPhysicalTopology(saved_paths_, saved_modes_) &&
-          !DetachLiveVirtual()) return false;
+      if (!ApplyPhysicalTopology(saved_paths_, saved_modes_) &&
+          !DetachLiveVirtual(saved_primary_)) return false;
       changed_ = false;
     }
     saved_paths_.clear();
@@ -444,6 +479,7 @@ class WindowsSingleDisplayGuard {
   ULONGLONG next_probe_ = 0;
   ULONGLONG deadline_ = 0;
   ULONGLONG stable_since_ = 0;
+  std::wstring saved_primary_;
   std::string capture_display_;
   std::vector<DISPLAYCONFIG_PATH_INFO> saved_paths_;
   std::vector<DISPLAYCONFIG_MODE_INFO> saved_modes_;

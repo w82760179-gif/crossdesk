@@ -290,7 +290,9 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         if (!inside && hardwareButtons == 0) return true;
         // Android composites its own absolute pointer independently of the video.
         useSystemCursor(true);
-        mouseInput.move(viewport.normalizedX(e.getX()), viewport.normalizedY(e.getY()));
+        float nextX = viewport.normalizedX(e.getX()), nextY = viewport.normalizedY(e.getY());
+        // Button and wheel messages already carry the current position.
+        if (nextX != x || nextY != y) mouseInput.move(nextX, nextY);
         updateHardwareButtons(e.getButtonState());
         if (action == MotionEvent.ACTION_DOWN && relative && captureMouse && !hasPointerCapture()) {
             requestFocus();
@@ -325,6 +327,11 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         updateHardwareButtons(action == MotionEvent.ACTION_CANCEL ? 0 : e.getButtonState());
         if (action == MotionEvent.ACTION_SCROLL) sendWheel(e);
         return true;
+    }
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (android.os.Build.VERSION.SDK_INT >= 30)
+            requestUnbufferedDispatch(android.view.InputDevice.SOURCE_CLASS_POINTER);
     }
     @Override protected void onDetachedFromWindow() { releasePointerCaptureSafe(); releaseMouse(); super.onDetachedFromWindow(); }
     private final class Cursor extends View {

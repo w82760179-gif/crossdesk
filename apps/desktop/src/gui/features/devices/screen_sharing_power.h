@@ -20,12 +20,13 @@ class ScreenSharingPower {
   ScreenSharingPower(const ScreenSharingPower&) = delete;
   ScreenSharingPower& operator=(const ScreenSharingPower&) = delete;
 
-  void SetSharing(bool sharing);
+  void SetSharing(bool sharing, bool keep_display_awake = true);
 
  private:
   struct Impl;
   std::unique_ptr<Impl> impl_;
   bool sharing_ = false;
+  bool keep_display_awake_ = true;
 };
 
 }  // namespace crossdesk

@@ -56,7 +56,7 @@ final class SessionControls extends FrameLayout {
     private boolean hasReceivedFile;
     private String menuPage="controls";
     private RemoteNetworkStatistics.Snapshot network=new RemoteNetworkStatistics().snapshot(0);
-    private RemoteVideoSettings settings=new RemoteVideoSettings(1);
+    private RemoteVideoSettings settings=new RemoteVideoSettings(RemoteVideoSettings.DEFAULT_PREFERENCE);
     private final java.util.List<SettingRow> settingRows=new java.util.ArrayList<>();
     private TextView[][] trafficCells;
     private LinearLayout[] trafficRows;

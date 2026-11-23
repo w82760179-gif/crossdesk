@@ -60,7 +60,7 @@ struct ScreenSharingPower::Impl {
   bool display = false;
   bool system = false;
 
-  void Start() {
+  void Start(bool keep_display_awake) {
     wchar_t reason_text[] = L"CrossDesk is sharing the desktop";
     REASON_CONTEXT reason{};
     reason.Version = POWER_REQUEST_CONTEXT_VERSION;
@@ -76,6 +76,7 @@ struct ScreenSharingPower::Impl {
     system = PowerSetRequest(request, PowerRequestSystemRequired) != 0;
     if (!system)
       LOG_WARN("Cannot prevent system idle sleep: {}", GetLastError());
+    if (!keep_display_awake) return;
     display = PowerSetRequest(request, PowerRequestDisplayRequired) != 0;
     if (!display)
       LOG_WARN("Cannot prevent display idle sleep: {}", GetLastError());
@@ -230,14 +231,19 @@ ScreenSharingPower::ScreenSharingPower() : impl_(std::make_unique<Impl>()) {}
 
 ScreenSharingPower::~ScreenSharingPower() { SetSharing(false); }
 
-void ScreenSharingPower::SetSharing(bool sharing) {
-  if (sharing_ == sharing) return;
+void ScreenSharingPower::SetSharing(bool sharing, bool keep_display_awake) {
+  if (sharing_ == sharing && (!sharing || keep_display_awake_ == keep_display_awake)) return;
+  if (sharing_) impl_->Stop();
   sharing_ = sharing;
+  keep_display_awake_ = keep_display_awake;
   if (sharing) {
+#ifdef _WIN32
+    impl_->Start(keep_display_awake);
+#else
     impl_->Start();
-    LOG_INFO("Requested display and system idle-sleep inhibition for screen sharing");
+#endif
+    LOG_INFO("Requested screen sharing power management");
   } else {
-    impl_->Stop();
     LOG_INFO("Released screen sharing power inhibitors");
   }
 }

@@ -4,6 +4,7 @@ import org.json.JSONObject;
 
 /** Same request/acknowledgement and rollback rules as the iOS controller. */
 final class RemoteVideoSettings {
+    static final int DEFAULT_PREFERENCE = 0;
     static String[] preferences(){return new String[]{L10n.tr("帧率优先"),L10n.tr("画质优先"),L10n.tr("平衡")};}
     static String[] details(){return new String[]{
         L10n.tr("优先保持画面流畅，带宽或编码压力较大时会更积极地降低分辨率。"),
@@ -27,7 +28,9 @@ final class RemoteVideoSettings {
         // maximum resolution vary, and AV1 may still need software fallback.
         // Small screens need no more than 720p; larger screens start at 1080p.
         // All quality/frame-rate choices remain available for manual adjustment.
-        selection=applied=new Values(displayLongEdge>0&&displayLongEdge<=1280?0:1,30,preference>=0&&preference<=2?preference:1);
+        int policy = preference >= 0 && preference <= 2 ? preference : DEFAULT_PREFERENCE;
+        int rate = policy == 0 ? 60 : 30;
+        selection=applied=new Values(displayLongEdge>0&&displayLongEdge<=1280?0:1,rate,policy);
     }
     void setSupported(boolean value){supported=value;if(!value){selection=applied;pending=false;failed=false;}}
     long begin(Values value){

@@ -340,8 +340,14 @@ bool SessionDeviceManager::HasConnectedController() const {
 void SessionDeviceManager::UpdateScreenSharingPower() {
   // Wayland keeps capture warm after the last disconnect. Only live viewers
   // justify keeping the host awake; an outgoing viewing session does not.
+  bool keep_display_awake = true;
+#ifdef _WIN32
+  // The tablet has its own display. A remote session must not request that
+  // Windows light up the host monitors to keep the machine awake.
+  keep_display_awake = !tablet_required_.load();
+#endif
   screen_sharing_power_.SetSharing(owner_.screen_capturer_is_started_ &&
-                                   HasConnectedController());
+                                   HasConnectedController(), keep_display_awake);
 }
 
 int SessionDeviceManager::StartScreenCapturer() {

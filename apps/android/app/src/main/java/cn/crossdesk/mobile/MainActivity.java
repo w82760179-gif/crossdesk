@@ -89,7 +89,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     private NativeSession documentSession;
     private java.io.File receivedFile,documentToSave;
     private final Runnable documentTimeout=()->{if(documentSession!=null&&!foreground)end(L10n.tr("文件选择已超时，会话已结束"));};
-    private RemoteVideoSettings videoSettings=new RemoteVideoSettings(1);
+    private RemoteVideoSettings videoSettings=new RemoteVideoSettings(RemoteVideoSettings.DEFAULT_PREFERENCE);
     private final android.os.Handler mainHandler=new android.os.Handler(android.os.Looper.getMainLooper());
     private Runnable videoSettingsTimeout;
     private RemoteDisplayResolutions displayResolutions=new RemoteDisplayResolutions();
@@ -426,7 +426,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         LinearLayout content=formPage("settings",L10n.tr("设置"),()->home(""));
         LinearLayout mouse=section(content,L10n.tr("鼠标控制"),MobileUi.SETTINGS_CARD_RADIUS);mouse.setPadding(dp(12),dp(12),dp(12),dp(12));boolean relative=preferences.getBoolean("relativeMouse",false);
         mouse.addView(segments(new String[]{L10n.tr("相对位置"),L10n.tr("绝对位置")},relative?0:1,true,index->preferences.edit().putBoolean("relativeMouse",index==0).apply()));
-        LinearLayout picture=section(content,L10n.tr("画面偏好"),MobileUi.SETTINGS_CARD_RADIUS);picture.setPadding(dp(12),dp(12),dp(12),dp(12));int preference=Math.max(0,Math.min(2,preferences.getInt("videoPreference",1)));
+        LinearLayout picture=section(content,L10n.tr("画面偏好"),MobileUi.SETTINGS_CARD_RADIUS);picture.setPadding(dp(12),dp(12),dp(12),dp(12));int preference=Math.max(0,Math.min(2,preferences.getInt("videoPreference",RemoteVideoSettings.DEFAULT_PREFERENCE)));
         picture.addView(segments(RemoteVideoSettings.preferences(),preference,true,index->preferences.edit().putInt("videoPreference",index).apply()));ui.gap(content,28);
         LinearLayout direction=section(content,L10n.tr("屏幕方向"),MobileUi.SETTINGS_CARD_RADIUS);LinearLayout directionRow=row();directionRow.setPadding(dp(16),dp(10),dp(16),dp(10));directionRow.addView(text(L10n.tr("连接建立后锁定横屏"),16,false),new LinearLayout.LayoutParams(0,-2,1));
         Switch autoLandscape=new Switch(this);autoLandscape.setContentDescription(L10n.tr("连接建立后锁定横屏"));autoLandscape.setChecked(preferences.getBoolean("autoLandscape",false));autoLandscape.setOnCheckedChangeListener((button,checked)->preferences.edit().putBoolean("autoLandscape",checked).apply());directionRow.addView(autoLandscape);direction.addView(directionRow);
@@ -751,7 +751,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         cancelDisplayResolutionTimeout();displayResolutions=new RemoteDisplayResolutions();
         cancelVideoSettingsTimeout();
         android.util.DisplayMetrics metrics=getResources().getDisplayMetrics();
-        videoSettings=new RemoteVideoSettings(preferences.getInt("videoPreference",1),Math.max(metrics.widthPixels,metrics.heightPixels));
+        videoSettings=new RemoteVideoSettings(preferences.getInt("videoPreference",RemoteVideoSettings.DEFAULT_PREFERENCE),Math.max(metrics.widthPixels,metrics.heightPixels));
     }
     private void updateVideoSettings(RemoteVideoSettings.Values value){
         if(!ready||session==null||!preferences.getBoolean("networkConsent",false))return;
