@@ -279,11 +279,6 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
                     y = viewport.normalizedY(e.getY());
                     mouseInput.move(x, y);
                     cursor.invalidate();
-                    if (captureMouse && !pictureInPicture &&
-                        android.os.Build.VERSION.SDK_INT >= 26 && !hasPointerCapture()) {
-                        requestFocus();
-                        requestPointerCapture();
-                    }
                 }
                 return true;
             }
@@ -349,8 +344,6 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         @Override public boolean onTouchEvent(MotionEvent event) { return touch(event); }
         @Override public boolean performClick() { super.performClick(); click(1, 2); return true; }
         @Override protected void onDraw(Canvas canvas) {
-            // Real Windows cursor (I-beam, hand, resize, arrow) is composited by host DXGI.
-            if (true) return;
             int saved=canvas.save();
             canvas.translate(viewport.left()+x*viewport.width(),viewport.top()+y*viewport.height());
             float density=getResources().getDisplayMetrics().density;canvas.scale(density,density);

@@ -4,6 +4,7 @@
 #include <Windows.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <cwchar>
 #include <iterator>
 #include <optional>
@@ -30,7 +31,7 @@ class WindowsSingleDisplayGuard {
 
   Scale DisplayScale(int requested) const {
     if (capture_display_.empty()) return {};
-    const auto source = ExclusiveSource();
+    const auto source = ActiveVirtualSource();
     if (!source || GetDisplayLabel(SourceName(*source)) != capture_display_) return {};
     const auto dpi = ReadScale(source->sourceInfo);
     if (!dpi) return {};
@@ -49,7 +50,7 @@ class WindowsSingleDisplayGuard {
                 identity.adapterId, identity.id},
                dpi->minimum + static_cast<int>(option - result.options.begin())};
     if (DisplayConfigSetDeviceInfo(&set.header) != ERROR_SUCCESS) return result;
-    const auto active = ExclusiveSource();
+    const auto active = ActiveVirtualSource();
     if (!active || active->sourceInfo.id != identity.id ||
         active->sourceInfo.adapterId.LowPart != identity.adapterId.LowPart ||
         active->sourceInfo.adapterId.HighPart != identity.adapterId.HighPart)
@@ -77,6 +78,7 @@ class WindowsSingleDisplayGuard {
       if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &saved_paths_, &saved_modes_) ||
           !KeepPhysicalPaths(saved_paths_, saved_modes_))
         return Fail("could not save a physical display layout");
+      keep_physical_outputs_ = saved_paths_.size() > 1;
       if (!ApplyVirtualTopology())
         return Fail("MttVDD did not offer an available 3000x2120 display");
       switching_ = true;
@@ -87,11 +89,11 @@ class WindowsSingleDisplayGuard {
     }
     if (now < next_probe_) return !capture_display_.empty();
     next_probe_ = now + (switching_ ? 250 : 500);
-    const auto active = ExclusiveDisplayName();
+    const auto active = ActiveVirtualDisplayName();
     if (active.empty()) {
       stable_since_ = 0;
       if (!switching_ || now >= deadline_)
-        return Fail("the 3000x2120 virtual screen did not stay exclusive");
+        return Fail("the requested 3000x2120 virtual layout did not stay stable");
       return false;
     }
 
@@ -108,8 +110,8 @@ class WindowsSingleDisplayGuard {
     }
     switching_ = false;
     capture_display_ = active;
-    LOG_INFO("Tablet display: {} ready at 3000x2120 with no physical displays active",
-             capture_display_);
+    LOG_INFO("Tablet display: {} ready at 3000x2120 ({})",
+             capture_display_, keep_physical_outputs_ ? "physical outputs retained" : "exclusive");
     return true;
   }
 
@@ -268,7 +270,6 @@ class WindowsSingleDisplayGuard {
     auto target = FindVirtualPath();
     if (!target) return false;
     target->flags |= DISPLAYCONFIG_PATH_ACTIVE;
-    target->sourceInfo.modeInfoIdx = 0;
     target->targetInfo.modeInfoIdx = DISPLAYCONFIG_PATH_MODE_IDX_INVALID;
 
     DISPLAYCONFIG_MODE_INFO mode{};
@@ -278,9 +279,36 @@ class WindowsSingleDisplayGuard {
     mode.sourceMode.width = kWidth;
     mode.sourceMode.height = kHeight;
     mode.sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
-    LONG status = SetDisplayConfig(1, &*target, 1, &mode, SDC_VALIDATE | kConfig);
+
+    // Some dual-screen setups reactivate physical outputs after an exclusive
+    // switch. Preserve their original modes and add only the MttVDD output.
+    std::vector<DISPLAYCONFIG_PATH_INFO> paths;
+    std::vector<DISPLAYCONFIG_MODE_INFO> modes;
+    if (keep_physical_outputs_) {
+      paths = saved_paths_;
+      modes = saved_modes_;
+      int64_t right_edge = 0;
+      for (const auto& path : paths) {
+        const auto index = path.sourceInfo.modeInfoIdx;
+        if (index >= modes.size() || modes[index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
+          return false;
+        const auto& source = modes[index].sourceMode;
+        const auto edge = static_cast<int64_t>(source.position.x) + source.width;
+        if (edge > right_edge) right_edge = edge;
+      }
+      if (right_edge > INT32_MAX - kWidth) return false;
+      mode.sourceMode.position.x = static_cast<LONG>(right_edge);
+    }
+    target->sourceInfo.modeInfoIdx = static_cast<UINT32>(modes.size());
+    paths.push_back(*target);
+    modes.push_back(mode);
+    const auto path_count = static_cast<UINT32>(paths.size());
+    const auto mode_count = static_cast<UINT32>(modes.size());
+    LONG status = SetDisplayConfig(path_count, paths.data(), mode_count,
+                                   modes.data(), SDC_VALIDATE | kConfig);
     if (status == ERROR_SUCCESS)
-      status = SetDisplayConfig(1, &*target, 1, &mode, SDC_APPLY | kConfig);
+      status = SetDisplayConfig(path_count, paths.data(), mode_count,
+                                modes.data(), SDC_APPLY | kConfig);
     if (status != ERROR_SUCCESS) {
       LOG_WARN("Tablet display: SetDisplayConfig failed, status={}", status);
       return false;
@@ -289,24 +317,27 @@ class WindowsSingleDisplayGuard {
     return true;
   }
 
-  static std::optional<DISPLAYCONFIG_PATH_INFO> ExclusiveSource() {
+  std::optional<DISPLAYCONFIG_PATH_INFO> ActiveVirtualSource() const {
     std::vector<DISPLAYCONFIG_PATH_INFO> paths;
     std::vector<DISPLAYCONFIG_MODE_INFO> modes;
-    if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes) || paths.size() != 1)
+    if (!ReadTopology(QDC_ONLY_ACTIVE_PATHS, &paths, &modes)) return {};
+    const size_t expected = keep_physical_outputs_ ? saved_paths_.size() + 1 : 1;
+    if (paths.size() != expected) return {};
+    const auto target = std::find_if(paths.begin(), paths.end(), IsMttVdd);
+    if (target == paths.end() || std::any_of(std::next(target), paths.end(), IsMttVdd))
       return {};
-    const auto& path = paths.front();
-    if (!IsMttVdd(path)) return {};
-    const auto index = path.sourceInfo.modeInfoIdx;
+    const auto index = target->sourceInfo.modeInfoIdx;
     if (index >= modes.size() || modes[index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
       return {};
     const auto& mode = modes[index].sourceMode;
-    if (mode.width == 0 || mode.height == 0 ||
-        mode.position.x != 0 || mode.position.y != 0) return {};
-    return path;
+    if (mode.width != kWidth || mode.height != kHeight ||
+        (!keep_physical_outputs_ && (mode.position.x != 0 || mode.position.y != 0)))
+      return {};
+    return *target;
   }
 
-  static std::string ExclusiveDisplayName() {
-    const auto source = ExclusiveSource();
+  std::string ActiveVirtualDisplayName() const {
+    const auto source = ActiveVirtualSource();
     return source ? GetDisplayLabel(SourceName(*source)) : std::string{};
   }
 
@@ -331,6 +362,7 @@ class WindowsSingleDisplayGuard {
   bool attempted_ = false;
   bool switching_ = false;
   bool changed_ = false;
+  bool keep_physical_outputs_ = false;
   ULONGLONG next_probe_ = 0;
   ULONGLONG deadline_ = 0;
   ULONGLONG stable_since_ = 0;
