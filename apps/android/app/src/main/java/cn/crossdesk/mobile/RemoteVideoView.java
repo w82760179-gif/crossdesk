@@ -387,6 +387,10 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
             canvas.translate(viewport.left()+x*viewport.width(),viewport.top()+y*viewport.height());
             if(host.bitmap!=null){
                 float scale=viewport.width()/host.desktopWidth;
+                float density=getResources().getDisplayMetrics().density;
+                float maxBoxPx=34f*density;
+                float bitmapMax=Math.max(host.bitmap.getWidth(),host.bitmap.getHeight());
+                if(bitmapMax>0f && bitmapMax*scale>maxBoxPx) scale=maxBoxPx/bitmapMax;
                 canvas.scale(scale,scale);
                 paint.setColor(Color.WHITE);paint.setStyle(Paint.Style.FILL);paint.setFilterBitmap(true);
                 canvas.drawBitmap(host.bitmap,null,new android.graphics.Rect(-host.hotX,-host.hotY,

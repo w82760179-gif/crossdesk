@@ -67,7 +67,13 @@ inline nlohmann::json CursorPixels(HCURSOR cursor) {
   if (length) { emit(length,2); emit(last,8); }
   SelectObject(dc, old); DeleteObject(dib); DeleteDC(dc);
   if (!ok) return nullptr;
+  int desktop_w = GetSystemMetrics(SM_CXSCREEN);
+  DEVMODEW dm{};
+  dm.dmSize = sizeof(dm);
+  if (EnumDisplaySettingsW(nullptr, ENUM_CURRENT_SETTINGS, &dm) && dm.dmPelsWidth > 0) {
+    desktop_w = static_cast<int>(dm.dmPelsWidth);
+  }
   return {{"w",w},{"h",h},{"hx",icon.xHotspot},{"hy",icon.yHotspot},
-          {"desktop_w",GetSystemMetrics(SM_CXSCREEN)},{"runs",std::move(runs)}};
+          {"desktop_w",desktop_w},{"runs",std::move(runs)}};
 }
 }  // namespace crossdesk
