@@ -366,8 +366,10 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         // while keeping floating controls in safeArea.
         boolean fillScreen=preferences.getBoolean("fillScreen",!isTablet());
         boolean captureMouse=preferences.getBoolean("captureMouse",true);
+        boolean tabletTouch=preferences.getBoolean("tabletTouch",true);
         video.setFillScreen(fillScreen);
         video.setCaptureMouse(captureMouse);
+        video.setTabletTouch(tabletTouch);
         canvas.addView(video,0,new FrameLayout.LayoutParams(-1,-1));
         if(android.os.Build.VERSION.SDK_INT>=29){
             video.addOnLayoutChangeListener((v,l,t,r,b,ol,ot,or2,ob)->{
@@ -386,6 +388,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             public void togglePrivacy(){if(ready&&session!=null)session.togglePrivacy();}
             public void fillScreen(boolean fill){preferences.edit().putBoolean("fillScreen",fill).apply();if(video!=null)video.setFillScreen(fill);if(controls!=null)controls.setFillScreen(fill);}
             public void captureMouse(boolean cap){preferences.edit().putBoolean("captureMouse",cap).apply();if(video!=null)video.setCaptureMouse(cap);if(controls!=null)controls.setCaptureMouse(cap);}
+            public void tabletTouch(boolean enabled){preferences.edit().putBoolean("tabletTouch",enabled).apply();if(video!=null)video.setTabletTouch(enabled);if(controls!=null)controls.setTabletTouch(enabled);}
             public void menuOpened(){if(video!=null)video.releasePointerCaptureSafe();}
             public void key(int code){tapKey(code);}
             public boolean textEdit(int count,String value){return sendTextEdit(count,value);}
@@ -395,7 +398,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             public void displayResolution(RemoteDisplayResolutions.Mode mode){updateDisplayResolution(mode);}
             public void virtualDisplayScale(int percent){requestVirtualDisplayScale(percent);}
             public void videoSettings(int field,int value){RemoteVideoSettings.Values old=MainActivity.this.videoSettings.selection;updateVideoSettings(new RemoteVideoSettings.Values(field==0?value:old.quality,field==1?value:old.frameRate,field==2?value:old.preference));}
-        });controls.desktopInput=video;controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);controls.setRelative(preferences.getBoolean("relativeMouse",false));controls.setFillScreen(fillScreen);controls.setCaptureMouse(captureMouse);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });controls.desktopInput=video;controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);controls.setRelative(preferences.getBoolean("relativeMouse",false));controls.setFillScreen(fillScreen);controls.setCaptureMouse(captureMouse);controls.setTabletTouch(tabletTouch);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         controls.attachMouseBar(canvas,new VirtualMouseBar(ui,video.mouseInput));
         privacyChanged();
         video.remoteFocusChanged=()->{if(controls!=null)controls.resetKeyboardContext();};

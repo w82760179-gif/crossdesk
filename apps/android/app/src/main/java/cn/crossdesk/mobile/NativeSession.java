@@ -307,6 +307,14 @@ final class NativeSession implements AutoCloseable {
         if (flag == 0) inputQueue.move(x, y);
         else execute(() -> { if (connected) nPointer(handle, x, y, flag, wheel); });
     }
+    void touch(int[] ids, int[] phases, float[] xs, float[] ys, int count) {
+        if (closed || !connected || count < 0 || count > 10) return;
+        int[] cIds = count > 0 ? java.util.Arrays.copyOf(ids, count) : new int[0];
+        int[] cPhases = count > 0 ? java.util.Arrays.copyOf(phases, count) : new int[0];
+        float[] cXs = count > 0 ? java.util.Arrays.copyOf(xs, count) : new float[0];
+        float[] cYs = count > 0 ? java.util.Arrays.copyOf(ys, count) : new float[0];
+        execute(() -> { if (connected) nTouch(handle, cIds, cPhases, cXs, cYs, count); });
+    }
     void key(int code, boolean down) { execute(() -> { if (connected) nKey(handle, code, down); }); }
     void chord(int code,int[] modifiers) {
         if(closed||!connected)return;
@@ -403,6 +411,7 @@ final class NativeSession implements AutoCloseable {
     private static native boolean nConnect(long handle, String identity, String remote, String password);
     private static native void nReady(long handle,byte[] displayResolutions);
     private static native void nPointer(long handle, float x, float y, int flag, int wheel);
+    private static native void nTouch(long handle, int[] ids, int[] phases, float[] xs, float[] ys, int count);
     private static native void nKey(long handle, int code, boolean down);
     private static native void nText(long handle,byte[] text);
     private static native void nControl(long handle, int type, int value);

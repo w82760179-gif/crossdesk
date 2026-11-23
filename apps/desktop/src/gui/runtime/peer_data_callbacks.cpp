@@ -359,6 +359,18 @@ void PeerEventHandler::OnReceiveDataBuffer(
             bound_peer, wire_id.data(), wire_id.size(),
             static_cast<MiniRtcVideoQuality>(settings.quality), settings.frame_rate,
             static_cast<MiniRtcVideoDegradationPreference>(settings.preference)) == 0;
+    if (remote_action.vs.accepted) {
+      uint32_t relay_cap = 0;
+      {
+        std::shared_lock lock(runtime->connection_status_mutex_);
+        const auto it = runtime->relay_bitrate_limits_.find(remote_id);
+        if (it != runtime->relay_bitrate_limits_.end()) relay_cap = it->second;
+      }
+      if (relay_cap > 0) {
+        MiniRtcUpdateVideoBitrateLimit(bound_peer, wire_id.data(), wire_id.size(),
+                                       relay_cap);
+      }
+    }
     LOG_INFO(
         "Video settings: source={} request={} quality={} fps={} preference={} "
         "accepted={}",
@@ -655,6 +667,21 @@ InputOutcome GuiRuntime::ApplyRemoteInput(const std::string& remote_id,
         [this, &remote_action, display] {
           return InjectRemoteMouse(remote_action, display);
         });
+  } else if (remote_action.type == ControlType::touch) {
+    if (devices_.SendRemoteTouch(remote_action, display) == 0) {
+      return InputOutcome::applied;
+    }
+    if (remote_action.touch_points.size() == 1) {
+      const auto& pt = remote_action.touch_points[0];
+      if (pt.phase == 0 || pt.phase == 2) {
+        RemoteAction fallback{};
+        fallback.type = ControlType::mouse;
+        fallback.m = {pt.x, pt.y, 0,
+                      pt.phase == 0 ? MouseFlag::left_down : MouseFlag::left_up};
+        return InjectRemoteMouse(fallback, display);
+      }
+    }
+    return InputOutcome::failed;
   } else if (remote_action.type == ControlType::keyboard) {
     return keyboard_.ApplyRemoteEvent(remote_id, remote_action);
   } else if (remote_action.type == ControlType::keyboard_state) {

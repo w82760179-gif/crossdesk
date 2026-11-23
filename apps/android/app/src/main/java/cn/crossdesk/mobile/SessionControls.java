@@ -22,6 +22,7 @@ final class SessionControls extends FrameLayout {
         default void togglePrivacy() { }
         default void fillScreen(boolean fill) { }
         default void captureMouse(boolean capture) { }
+        default void tabletTouch(boolean enabled) { }
         default void menuOpened() { }
     }
     private final MobileUi ui;
@@ -33,7 +34,7 @@ final class SessionControls extends FrameLayout {
     private final RemoteKeyboard keyboard;
     private VirtualMouseBar mouseBar;
     private FrameLayout mouseHost;
-    private boolean mouseVisible,pictureInPicture,fillScreen,captureMouse=true;
+    private boolean mouseVisible,pictureInPicture,fillScreen,captureMouse=true,tabletTouch=true;
     private ScrollView menuScroll;
     private int menuColumns=3;
     private final ViewTreeObserver.OnGlobalLayoutListener legacyKeyboardLayout=this::legacyKeyboardLayout;
@@ -152,6 +153,7 @@ final class SessionControls extends FrameLayout {
     }
     void setFillScreen(boolean value){fillScreen=value;}
     void setCaptureMouse(boolean value){captureMouse=value;}
+    void setTabletTouch(boolean value){tabletTouch=value;}
     RemoteVideoView desktopInput;
     @android.annotation.SuppressLint("ClickableViewAccessibility")
     @Override public boolean onTouchEvent(MotionEvent event) {
@@ -291,6 +293,15 @@ final class SessionControls extends FrameLayout {
             capGroup.setPadding(ui.dp(2),ui.dp(2),ui.dp(2),ui.dp(2));body.addView(capGroup);
             for(int i=0;i<capLabels.length;i++){
                 TextView button=(TextView)capGroup.getChildAt(i);button.setTextSize(12);button.setMinHeight(ui.dp(28));button.setSingleLine();
+                button.setLayoutParams(new LinearLayout.LayoutParams(0,ui.dp(28),1));
+            }
+            ui.gap(body,12);
+            TextView touchTitle=ui.text("平板触控模式 (手指滑屏与鼠标共存)",12,false);touchTitle.setTextColor(SECONDARY);body.addView(touchTitle);ui.gap(body,5);
+            String[] touchLabels={"关闭","开启"};
+            SegmentedControl touchGroup=new SegmentedControl(ui,touchLabels,tabletTouch?1:0,true,index->{tabletTouch=(index==1);actions.tabletTouch(tabletTouch);});
+            touchGroup.setPadding(ui.dp(2),ui.dp(2),ui.dp(2),ui.dp(2));body.addView(touchGroup);
+            for(int i=0;i<touchLabels.length;i++){
+                TextView button=(TextView)touchGroup.getChildAt(i);button.setTextSize(12);button.setMinHeight(ui.dp(28));button.setSingleLine();
                 button.setLayoutParams(new LinearLayout.LayoutParams(0,ui.dp(28),1));
             }
         }

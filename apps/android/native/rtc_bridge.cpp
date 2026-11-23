@@ -430,6 +430,37 @@ extern "C" JNIEXPORT void JNICALL JNI_METHOD(nPointer)(
   }
   s->Send(kMouseStream, action.to_json());
 }
+extern "C" JNIEXPORT void JNICALL JNI_METHOD(nTouch)(
+    JNIEnv* env, jclass, jlong handle, jintArray ids, jintArray phases,
+    jfloatArray xs, jfloatArray ys, jint count) {
+  auto* s = From(handle);
+  if (!s || !s->controller || s->stopping || count < 0 || count > 10) return;
+  RemoteAction action{};
+  action.type = touch;
+  if (count > 0 && ids && phases && xs && ys) {
+    jint id_buf[10]{};
+    jint phase_buf[10]{};
+    jfloat x_buf[10]{};
+    jfloat y_buf[10]{};
+    env->GetIntArrayRegion(ids, 0, count, id_buf);
+    env->GetIntArrayRegion(phases, 0, count, phase_buf);
+    env->GetFloatArrayRegion(xs, 0, count, x_buf);
+    env->GetFloatArrayRegion(ys, 0, count, y_buf);
+    if (env->ExceptionCheck()) { env->ExceptionClear(); return; }
+    action.touch_points.reserve(static_cast<std::size_t>(count));
+    for (int i = 0; i < count; ++i) {
+      action.touch_points.push_back({
+          static_cast<uint32_t>(std::max(0, static_cast<int>(id_buf[i]))),
+          static_cast<uint8_t>(std::clamp(static_cast<int>(phase_buf[i]), 0, 3)),
+          std::clamp(static_cast<float>(x_buf[i]), 0.0f, 1.0f),
+          std::clamp(static_cast<float>(y_buf[i]), 0.0f, 1.0f)});
+    }
+  }
+  const auto data = action.to_json();
+  if (!data.empty()) {
+    MiniRtcSendReliableDataFrame(s->controller, data.data(), data.size(), kControlStream);
+  }
+}
 extern "C" JNIEXPORT void JNICALL JNI_METHOD(nKey)(JNIEnv*, jclass, jlong handle, jint key, jboolean down) {
   auto* s = From(handle); if (!s) return;
   RemoteAction action{}; action.type = keyboard;

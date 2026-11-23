@@ -207,10 +207,12 @@ void GuiRuntime::HandleServerControllerDisconnected(
     disconnect_lock_.Disconnected(remote_id,
         config_center_->IsLockOnDisconnect() &&
         !(managed_host_frontend_ && remote_id.rfind("lan/", 0) != 0));
+    devices_.CancelRemoteTouch();
     remote_input_.Disconnect(remote_id);
     devices_.OnControllerConnectionsChanged();
     connection_host_names_.erase(remote_id);
     codec_status_controllers_.erase(remote_id);
+    relay_bitrate_limits_.erase(remote_id);
     privacy_sessions_.Disconnected(remote_id);
     for (const auto& [id, status] : connection_status_) {
       if (status != MiniRtcConnectionStatus::MiniRtcConnectionConnected) {

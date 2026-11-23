@@ -10,6 +10,8 @@
 #include <vector>
 #include <atomic>
 #include <mutex>
+#include <unordered_map>
+#include <Windows.h>
 
 #include <remote_action.h>
 
@@ -27,6 +29,9 @@ class PlatformMouseController final : public MouseController {
   virtual int Init(std::vector<DisplayInfo> display_info_list);
   virtual int Destroy();
   virtual int SendMouseCommand(RemoteAction remote_action, int display_index);
+  int SendTouchCommand(const RemoteAction& remote_action,
+                       int display_index) override;
+  void CancelTouchInputs() override;
   void UpdateDisplayInfoList(
       const std::vector<DisplayInfo>& display_info_list) override;
   unsigned ReleasePressedButtons(unsigned mask = 7) override;
@@ -34,6 +39,9 @@ class PlatformMouseController final : public MouseController {
  private:
   std::vector<DisplayInfo> display_info_list_;
   std::mutex display_info_mutex_;
+  std::mutex touch_mutex_;
+  bool touch_initialized_ = false;
+  std::unordered_map<uint32_t, POINT> active_touch_points_;
   std::atomic<unsigned> pressed_buttons_{0};
 };
 }  // namespace crossdesk

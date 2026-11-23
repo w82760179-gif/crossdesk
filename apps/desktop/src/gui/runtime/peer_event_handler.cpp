@@ -633,12 +633,40 @@ void PeerEventHandler::OnNetStatusReport(
   auto props = runtime->FindRemoteSession(remote_id);
   if (!props) {
     bool report_codecs = false;
+    bool apply_bitrate_limit = false;
+    uint32_t desired_bitrate_limit = 0;
     {
-      std::shared_lock lock(runtime->connection_status_mutex_);
+      std::unique_lock lock(runtime->connection_status_mutex_);
       const auto status = runtime->connection_status_.find(remote_id);
-      report_codecs = runtime->codec_status_controllers_.count(remote_id) != 0 &&
+      const bool connected =
           status != runtime->connection_status_.end() &&
           status->second == MiniRtcConnectionStatus::MiniRtcConnectionConnected;
+      report_codecs = connected &&
+          runtime->codec_status_controllers_.count(remote_id) != 0;
+      if (connected && mode != MiniRtcTraversalMode::MiniRtcTraversalUnknown) {
+        const uint32_t relay_max = runtime->config_center_
+            ? static_cast<uint32_t>(runtime->config_center_->GetRelayMaxBitrateBps())
+            : 4'300'000u;
+        desired_bitrate_limit =
+            mode == MiniRtcTraversalMode::MiniRtcTraversalP2P ? 0u : relay_max;
+        const auto it = runtime->relay_bitrate_limits_.find(remote_id);
+        if (it == runtime->relay_bitrate_limits_.end() ||
+            it->second != desired_bitrate_limit) {
+          runtime->relay_bitrate_limits_[remote_id] = desired_bitrate_limit;
+          apply_bitrate_limit = true;
+        }
+      }
+    }
+    if (apply_bitrate_limit && runtime->peer_) {
+      const auto sub = runtime->preview_subscriptions_.Get(remote_id);
+      if (!sub || !sub->max_bitrate_bps ||
+          (desired_bitrate_limit > 0 &&
+           desired_bitrate_limit < *sub->max_bitrate_bps)) {
+        MiniRtcUpdateVideoBitrateLimit(runtime->peer_, user_id, user_id_size,
+                                       desired_bitrate_limit);
+        LOG_INFO("Applied traversal video bitrate limit: remote={} mode={} max_bps={}",
+                 remote_id, static_cast<int>(mode), desired_bitrate_limit);
+      }
     }
     if (net_traffic_stats && report_codecs) {
       RemoteAction action{};

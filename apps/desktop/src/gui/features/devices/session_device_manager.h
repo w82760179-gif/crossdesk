@@ -65,6 +65,15 @@ public:
                                  Send send) {
     return remote_mouse_buttons_.Apply(remote_id, flag, std::move(send));
   }
+  int SendRemoteTouch(const RemoteAction& action, int display_index) {
+    std::lock_guard<std::mutex> lock(mouse_controller_mutex_);
+    if (!mouse_controller_) return -1;
+    return mouse_controller_->SendTouchCommand(action, display_index);
+  }
+  void CancelRemoteTouch() {
+    std::lock_guard<std::mutex> lock(mouse_controller_mutex_);
+    if (mouse_controller_) mouse_controller_->CancelTouchInputs();
+  }
 #ifdef _WIN32
   bool SetWindowsSessionDisplay(const std::string& display) {
     if (requested_windows_display_ == display) return false;

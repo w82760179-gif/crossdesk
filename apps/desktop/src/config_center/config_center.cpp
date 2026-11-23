@@ -149,6 +149,8 @@ int ConfigCenter::Load() {
       *ini_, section_, "direct_start_bitrate_bps", kDefaultDirectStartBitrateBps);
   relay_start_bitrate_bps_ = ReadStartingBitrate(
       *ini_, section_, "relay_start_bitrate_bps", kDefaultRelayStartBitrateBps);
+  relay_max_bitrate_bps_ = ReadStartingBitrate(
+      *ini_, section_, "relay_max_bitrate_bps", kDefaultRelayMaxBitrateBps);
   disable_receiver_padding_probing_ = ini_->GetBoolValue(
       section_, "disable_receiver_padding_probing",
       kDefaultDisableReceiverPaddingProbing);
@@ -161,7 +163,8 @@ int ConfigCenter::Load() {
   // the estimates that will actually be used for subsequent connections.
   for (const auto& entry :
        {std::make_pair("direct_start_bitrate_bps", direct_start_bitrate_bps_),
-        std::make_pair("relay_start_bitrate_bps", relay_start_bitrate_bps_)}) {
+        std::make_pair("relay_start_bitrate_bps", relay_start_bitrate_bps_),
+        std::make_pair("relay_max_bitrate_bps", relay_max_bitrate_bps_)}) {
     if (std::to_string(entry.second) != ini_->GetValue(section_, entry.first, "")) {
       ini_->SetLongValue(section_, entry.first, entry.second);
       persist_config_migration = true;
@@ -336,6 +339,7 @@ std::string ConfigCenter::ExportSharedHostConfig() const {
   host.SetLongValue(section_, "turn_mode", static_cast<long>(turn_mode_));
   host.SetLongValue(section_, "direct_start_bitrate_bps", direct_start_bitrate_bps_);
   host.SetLongValue(section_, "relay_start_bitrate_bps", relay_start_bitrate_bps_);
+  host.SetLongValue(section_, "relay_max_bitrate_bps", relay_max_bitrate_bps_);
   host.SetBoolValue(section_, "disable_receiver_padding_probing",
                     disable_receiver_padding_probing_);
   host.SetLongValue(section_, "video_encode_format", static_cast<long>(video_encode_format_));
@@ -363,6 +367,8 @@ int ConfigCenter::ApplySharedHostConfig(const std::string& contents) {
       host, section_, "direct_start_bitrate_bps", kDefaultDirectStartBitrateBps);
   const int relay_bps = ReadStartingBitrate(
       host, section_, "relay_start_bitrate_bps", kDefaultRelayStartBitrateBps);
+  const int relay_max_bps = ReadStartingBitrate(
+      host, section_, "relay_max_bitrate_bps", kDefaultRelayMaxBitrateBps);
   const bool disable_receiver_padding_probing = host.GetBoolValue(
       section_, "disable_receiver_padding_probing",
       kDefaultDisableReceiverPaddingProbing);
@@ -377,6 +383,7 @@ int ConfigCenter::ApplySharedHostConfig(const std::string& contents) {
                    {"turn_mode", std::to_string(turn)}, {"video_encode_format", std::to_string(codec)},
                    {"direct_start_bitrate_bps", std::to_string(direct_bps)},
                    {"relay_start_bitrate_bps", std::to_string(relay_bps)},
+                   {"relay_max_bitrate_bps", std::to_string(relay_max_bps)},
                    {"disable_receiver_padding_probing",
                     disable_receiver_padding_probing ? "true" : "false"},
                    {"trusted_devices_only", trusted ? "true" : "false"},
@@ -680,6 +687,10 @@ int ConfigCenter::GetDirectStartBitrateBps() const {
 
 int ConfigCenter::GetRelayStartBitrateBps() const {
   return relay_start_bitrate_bps_;
+}
+
+int ConfigCenter::GetRelayMaxBitrateBps() const {
+  return relay_max_bitrate_bps_;
 }
 
 bool ConfigCenter::IsReceiverPaddingProbingDisabled() const {

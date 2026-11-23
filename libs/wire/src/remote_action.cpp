@@ -309,6 +309,16 @@ std::string RemoteAction::ToJson(const RemoteAction& action) {
       }
       break;
     }
+    case ControlType::touch: {
+      nlohmann::json points = nlohmann::json::array();
+      const std::size_t count = std::min<std::size_t>(action.touch_points.size(), 10);
+      for (std::size_t i = 0; i < count; ++i) {
+        const auto& pt = action.touch_points[i];
+        points.push_back({{"id", pt.id}, {"p", pt.phase}, {"x", pt.x}, {"y", pt.y}});
+      }
+      object["points"] = std::move(points);
+      break;
+    }
     case ControlType::audio_capture:
       object["audio_capture"] = action.a;
       break;
@@ -554,6 +564,26 @@ bool RemoteAction::FromJson(const std::string& json_string,
             if (p < 100 || p > 500) return false;
             scale.options.push_back(static_cast<int>(p));
           }
+        }
+        break;
+      }
+      case ControlType::touch: {
+        const auto& points = object.at("points");
+        if (!points.is_array() || points.size() > 10) return false;
+        output.touch_points.clear();
+        output.touch_points.reserve(points.size());
+        for (const auto& item : points) {
+          if (!item.is_object()) return false;
+          const auto id = item.at("id").get<int64_t>();
+          const auto phase = item.at("p").get<int64_t>();
+          const float x = item.at("x").get<float>();
+          const float y = item.at("y").get<float>();
+          if (id < 0 || id > 0xFFFF || phase < 0 || phase > 3 ||
+              !std::isfinite(x) || !std::isfinite(y))
+            return false;
+          output.touch_points.push_back(
+              {static_cast<uint32_t>(id), static_cast<uint8_t>(phase),
+               std::clamp(x, 0.0f, 1.0f), std::clamp(y, 0.0f, 1.0f)});
         }
         break;
       }

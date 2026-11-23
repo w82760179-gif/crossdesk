@@ -40,6 +40,7 @@ enum ControlType {
   open_display_scaling_status = 18,
   virtual_display_scale = 19,
   virtual_display_scale_status = 20,
+  touch = 21,
 };
 
 enum MouseFlag {
@@ -238,6 +239,13 @@ struct RemoteAction {
   } virtual_scale;
   // Controller preferences sent with its initial host information.
   std::vector<DisplayResolutionPreference> preferred_display_resolutions;
+  struct TouchPoint {
+    uint32_t id = 0;
+    uint8_t phase = 0;  // 0=down, 1=move, 2=up, 3=cancel
+    float x = 0.0f;
+    float y = 0.0f;
+  };
+  std::vector<TouchPoint> touch_points;
 
   std::string to_json() const;
   bool from_json(const std::string& json_string);

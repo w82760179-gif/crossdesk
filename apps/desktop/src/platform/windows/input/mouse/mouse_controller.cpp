@@ -41,7 +41,133 @@ void PlatformMouseController::UpdateDisplayInfoList(
 }
 
 int PlatformMouseController::Destroy() {
+  CancelTouchInputs();
   return ReleasePressedButtons() == 7 ? 0 : -1;
+}
+
+void PlatformMouseController::CancelTouchInputs() {
+  std::lock_guard<std::mutex> lock(touch_mutex_);
+  if (!touch_initialized_ || active_touch_points_.empty()) {
+    active_touch_points_.clear();
+    return;
+  }
+  ScopedWindowsPhysicalCoordinates physical_coordinates;
+  std::vector<POINTER_TOUCH_INFO> contacts;
+  contacts.reserve(active_touch_points_.size());
+  for (const auto& [id, pt] : active_touch_points_) {
+    POINTER_TOUCH_INFO info{};
+    info.pointerInfo.pointerType = PT_TOUCH;
+    info.pointerInfo.pointerId = id;
+    info.pointerInfo.ptPixelLocation = pt;
+    info.pointerInfo.pointerFlags = POINTER_FLAG_UP | POINTER_FLAG_CANCELED;
+    info.touchFlags = TOUCH_FLAG_NONE;
+    info.touchMask = TOUCH_MASK_CONTACTAREA | TOUCH_MASK_ORIENTATION | TOUCH_MASK_PRESSURE;
+    info.rcContact = {pt.x - 2, pt.y - 2, pt.x + 2, pt.y + 2};
+    info.orientation = 90;
+    info.pressure = 32000;
+    contacts.push_back(info);
+  }
+  InjectTouchInput(static_cast<UINT32>(contacts.size()), contacts.data());
+  active_touch_points_.clear();
+}
+
+int PlatformMouseController::SendTouchCommand(const RemoteAction& remote_action,
+                                              int display_index) {
+  if (remote_action.type != ControlType::touch) return 0;
+  std::unique_lock<std::mutex> geometry_lock(display_info_mutex_);
+  if (display_info_list_.empty()) return -1;
+  if (display_index < 0 ||
+      display_index >= static_cast<int>(display_info_list_.size())) {
+    display_index = 0;
+  }
+  const auto display = display_info_list_[display_index];
+  geometry_lock.unlock();
+  if (display.width <= 0 || display.height <= 0) return -1;
+
+  std::lock_guard<std::mutex> lock(touch_mutex_);
+  ScopedWindowsPhysicalCoordinates physical_coordinates;
+  if (!touch_initialized_) {
+    if (!InitializeTouchInjection(10, TOUCH_FEEDBACK_DEFAULT)) {
+      LOG_WARN("InitializeTouchInjection failed, error={}", GetLastError());
+      return -1;
+    }
+    touch_initialized_ = true;
+  }
+
+  auto make_info = [](uint32_t id, POINT p, POINTER_FLAGS flags) {
+    POINTER_TOUCH_INFO info{};
+    info.pointerInfo.pointerType = PT_TOUCH;
+    info.pointerInfo.pointerId = id;
+    info.pointerInfo.ptPixelLocation = p;
+    info.pointerInfo.pointerFlags = flags;
+    info.touchFlags = TOUCH_FLAG_NONE;
+    info.touchMask = TOUCH_MASK_CONTACTAREA | TOUCH_MASK_ORIENTATION | TOUCH_MASK_PRESSURE;
+    info.rcContact = {p.x - 2, p.y - 2, p.x + 2, p.y + 2};
+    info.orientation = 90;
+    info.pressure = 32000;
+    return info;
+  };
+
+  if (remote_action.touch_points.empty()) {
+    if (active_touch_points_.empty()) return 0;
+    std::vector<POINTER_TOUCH_INFO> cancel_contacts;
+    cancel_contacts.reserve(active_touch_points_.size());
+    for (const auto& [id, pt] : active_touch_points_) {
+      cancel_contacts.push_back(make_info(id, pt, POINTER_FLAG_UP | POINTER_FLAG_CANCELED));
+    }
+    InjectTouchInput(static_cast<UINT32>(cancel_contacts.size()), cancel_contacts.data());
+    active_touch_points_.clear();
+    return 0;
+  }
+
+  std::unordered_map<uint32_t, RemoteAction::TouchPoint> incoming;
+  for (const auto& pt : remote_action.touch_points) incoming[pt.id] = pt;
+
+  std::vector<POINTER_TOUCH_INFO> contacts;
+  contacts.reserve(10);
+  std::unordered_map<uint32_t, POINT> next_active;
+
+  for (const auto& [id, pt] : incoming) {
+    if (contacts.size() >= 10) break;
+    POINT px{};
+    px.x = static_cast<LONG>(std::clamp(pt.x, 0.0f, 1.0f) * (display.width - 1)) + display.left;
+    px.y = static_cast<LONG>(std::clamp(pt.y, 0.0f, 1.0f) * (display.height - 1)) + display.top;
+    const bool was_active = active_touch_points_.count(id) != 0;
+    if (pt.phase == 0 || pt.phase == 1) {
+      POINTER_FLAGS flags = was_active
+          ? (POINTER_FLAG_UPDATE | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT)
+          : (POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT);
+      contacts.push_back(make_info(id, px, flags));
+      next_active[id] = px;
+    } else if (pt.phase == 2 || pt.phase == 3) {
+      if (was_active) {
+        POINTER_FLAGS flags = pt.phase == 3
+            ? (POINTER_FLAG_UP | POINTER_FLAG_CANCELED)
+            : POINTER_FLAG_UP;
+        contacts.push_back(make_info(id, px, flags));
+      }
+    }
+  }
+
+  for (const auto& [id, prev_pt] : active_touch_points_) {
+    if (incoming.count(id) == 0 && contacts.size() < 10) {
+      contacts.push_back(make_info(id, prev_pt, POINTER_FLAG_UP | POINTER_FLAG_CANCELED));
+    }
+  }
+
+  if (contacts.empty()) {
+    active_touch_points_.clear();
+    return 0;
+  }
+
+  if (!InjectTouchInput(static_cast<UINT32>(contacts.size()), contacts.data())) {
+    const DWORD err = GetLastError();
+    LOG_WARN("InjectTouchInput failed, count={}, err={}", contacts.size(), err);
+    active_touch_points_.clear();
+    return -1;
+  }
+  active_touch_points_ = std::move(next_active);
+  return 0;
 }
 
 unsigned PlatformMouseController::ReleasePressedButtons(unsigned mask) {

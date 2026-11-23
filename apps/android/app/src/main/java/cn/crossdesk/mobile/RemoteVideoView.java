@@ -37,6 +37,7 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     private long touchRevision;
     private boolean suppressPointerGesture;
     private boolean captureMouse = true;
+    private boolean tabletTouch = true, tabletTouchActive;
     private int hardwareButtons;
     private final HostCursor host = new HostCursor();
     private boolean implicitPrimary;
@@ -61,6 +62,14 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     void setCaptureMouse(boolean value) {
         captureMouse = value;
         if (!value) releasePointerCaptureSafe();
+    }
+    void setTabletTouch(boolean value) {
+        if (tabletTouch == value) return;
+        tabletTouch = value;
+        if (!value && tabletTouchActive) {
+            tabletTouchActive = false;
+            session.touch(new int[0], new int[0], new float[0], new float[0], 0);
+        }
     }
     void releasePointerCaptureSafe() {
         implicitPrimary=false; updateHardwareButtons(0);
@@ -204,8 +213,48 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         return true;
     }
     private void click(int down, int up) { mouseInput.click(down,up); }
+    private boolean handleTabletTouch(MotionEvent e) {
+        int action = e.getActionMasked();
+        int count = Math.min(e.getPointerCount(), 10);
+        if (count <= 0 || viewport.width() <= 0 || viewport.height() <= 0) return false;
+        if (action == MotionEvent.ACTION_DOWN) {
+            if (!viewport.contains(e.getX(), e.getY())) return false;
+            if (hasPointerCapture()) releasePointerCaptureSafe();
+            if (remoteFocusChanged != null) remoteFocusChanged.run();
+            tabletTouchActive = true;
+        } else if (!tabletTouchActive) {
+            return false;
+        }
+        int actionIndex = e.getActionIndex();
+        int[] ids = new int[count];
+        int[] phases = new int[count];
+        float[] xs = new float[count];
+        float[] ys = new float[count];
+        for (int i = 0; i < count; i++) {
+            ids[i] = e.getPointerId(i);
+            xs[i] = Math.max(0f, Math.min(1f, viewport.normalizedX(e.getX(i))));
+            ys[i] = Math.max(0f, Math.min(1f, viewport.normalizedY(e.getY(i))));
+            if (action == MotionEvent.ACTION_CANCEL) {
+                phases[i] = 3;
+            } else if ((action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_POINTER_DOWN) && i == actionIndex) {
+                phases[i] = 0;
+            } else if ((action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_POINTER_UP) && i == actionIndex) {
+                phases[i] = 2;
+            } else {
+                phases[i] = 1;
+            }
+        }
+        session.touch(ids, phases, xs, ys, count);
+        if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+            tabletTouchActive = false;
+        }
+        return true;
+    }
     private boolean touch(MotionEvent e) {
         if (isHardwareMouse(e)) return hardwareMouse(e);
+        if (tabletTouch && !relative && !pictureInPicture && !mouseInput.hasVirtualButton()) {
+            return handleTabletTouch(e);
+        }
         int action = e.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             directTap=!relative && viewport.contains(e.getX(),e.getY());
