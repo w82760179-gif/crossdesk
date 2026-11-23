@@ -111,7 +111,7 @@ class ConfigCenter {
   VIDEO_ENCODE_FORMAT video_encode_format_ = VIDEO_ENCODE_FORMAT::H264;
   TURN_MODE turn_mode_ = TURN_MODE::AUTO_UDP_TCP;
   static constexpr int kDefaultDirectStartBitrateBps = 10'000'000;
-  static constexpr int kDefaultRelayStartBitrateBps = 2'500'000;
+  static constexpr int kDefaultRelayStartBitrateBps = 3'000'000;
   static constexpr int kDefaultRelayMaxBitrateBps = 4'300'000;
   int direct_start_bitrate_bps_ = kDefaultDirectStartBitrateBps;
   int relay_start_bitrate_bps_ = kDefaultRelayStartBitrateBps;

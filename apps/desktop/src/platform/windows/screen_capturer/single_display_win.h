@@ -426,27 +426,37 @@ class WindowsSingleDisplayGuard {
     mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
     mode.id = target->sourceInfo.id;
     mode.adapterId = target->sourceInfo.adapterId;
-    // 7:5 tablet presets matched to MttVDD modes: default 2400x1696; override
-    // via tablet-display.ini [tablet] width=1650 | 2400 | 3000.
+    // 7:5 tablet presets matched to MttVDD modes: default native 3000x2120
+    // (1:1 dot-for-dot on OPPO Pad 5); override via tablet-display.ini
+    // [tablet] width=1650 | 2400 | 3000.
     wchar_t module[32768]{};
     DWORD length = GetModuleFileNameW(nullptr, module, 32768);
     auto config = std::filesystem::path(module).parent_path() / L"tablet-display.ini";
     const UINT32 configured_width =
-        length ? GetPrivateProfileIntW(L"tablet", L"width", kHighWidth, config.c_str())
-               : kHighWidth;
-    if (configured_width == kWidth) {
-      mode.sourceMode.width = kWidth;
-      mode.sourceMode.height = kHeight;
+        length ? GetPrivateProfileIntW(L"tablet", L"width", kWidth, config.c_str())
+               : kWidth;
+    if (configured_width == kHighWidth) {
+      mode.sourceMode.width = kHighWidth;
+      mode.sourceMode.height = kHighHeight;
     } else if (configured_width == kCompactWidth) {
       mode.sourceMode.width = kCompactWidth;
       mode.sourceMode.height = kCompactHeight;
     } else {
-      mode.sourceMode.width = kHighWidth;
-      mode.sourceMode.height = kHighHeight;
+      mode.sourceMode.width = kWidth;
+      mode.sourceMode.height = kHeight;
     }
     mode.sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
     Layout exclusive{{*target}, {mode}};
     auto status = exclusive.Set(SDC_VALIDATE);
+    if (status != ERROR_SUCCESS && mode.sourceMode.width == kWidth) {
+      LOG_WARN("Tablet display: {}x{} validation failed (status={}), falling back to {}x{}",
+               mode.sourceMode.width, mode.sourceMode.height, status,
+               kHighWidth, kHighHeight);
+      mode.sourceMode.width = kHighWidth;
+      mode.sourceMode.height = kHighHeight;
+      exclusive = Layout{{*target}, {mode}};
+      status = exclusive.Set(SDC_VALIDATE);
+    }
     if (status != ERROR_SUCCESS &&
         (mode.sourceMode.width != kCompactWidth ||
          mode.sourceMode.height != kCompactHeight)) {
