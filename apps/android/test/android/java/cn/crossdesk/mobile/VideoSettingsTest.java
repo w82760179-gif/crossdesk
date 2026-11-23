@@ -9,19 +9,19 @@ public class VideoSettingsTest {
 
     @Test public void officeDefaultMaintainsResolutionAndHonorsFrameRatePreference(){
         RemoteVideoSettings state=new RemoteVideoSettings(RemoteVideoSettings.DEFAULT_PREFERENCE,3000);
-        same(new RemoteVideoSettings.Values(1,30,1),state.selection);
+        same(new RemoteVideoSettings.Values(1,60,1),state.selection);
         same(new RemoteVideoSettings.Values(1,60,0),new RemoteVideoSettings(0,3000).selection);
-        same(new RemoteVideoSettings.Values(1,30,1),new RemoteVideoSettings(1,3000).selection);
-        same(new RemoteVideoSettings.Values(0,30,1),new RemoteVideoSettings(-1,1280).selection);
+        same(new RemoteVideoSettings.Values(1,60,1),new RemoteVideoSettings(1,3000).selection);
+        same(new RemoteVideoSettings.Values(0,60,1),new RemoteVideoSettings(-1,1280).selection);
     }
     @Test public void acknowledgementCommitsAndRejectionRollsBack(){
-        RemoteVideoSettings state=new RemoteVideoSettings(1);state.setSupported(true);long id=state.begin(first);assertTrue(state.pending);same(new RemoteVideoSettings.Values(1,30,1),state.applied);
+        RemoteVideoSettings state=new RemoteVideoSettings(1);state.setSupported(true);long id=state.begin(first);assertTrue(state.pending);same(new RemoteVideoSettings.Values(1,60,1),state.applied);
         state.receive(first,id,true);same(first,state.selection);assertFalse(state.pending);assertFalse(state.failed);state.expire(id);assertFalse(state.failed);
         id=state.begin(second);state.receive(second,id,false);same(first,state.selection);assertTrue(state.failed);state.begin(second);assertFalse(state.failed);
     }
 
     @Test public void timeoutLateReplyAndCapabilityLoss(){
-        RemoteVideoSettings state=new RemoteVideoSettings(1);state.setSupported(true);long id=state.begin(first);state.expire(id);assertTrue(state.failed);same(new RemoteVideoSettings.Values(1,30,1),state.selection);
+        RemoteVideoSettings state=new RemoteVideoSettings(1);state.setSupported(true);long id=state.begin(first);state.expire(id);assertTrue(state.failed);same(new RemoteVideoSettings.Values(1,60,1),state.selection);
         state.receive(first,id,true);same(first,state.selection);assertFalse(state.failed);
         id=state.begin(second);state.setSupported(false);state.receive(second,id,true);state.expire(id);same(first,state.selection);assertFalse(state.failed);assertFalse(state.pending);
     }

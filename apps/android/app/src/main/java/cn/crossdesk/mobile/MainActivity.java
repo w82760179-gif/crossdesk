@@ -835,9 +835,12 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         int code=KeyMap.windowsCode(event.getKeyCode());View focus=getCurrentFocus();
         boolean remoteEditor=focus instanceof RemoteKeyboardInput;
         boolean desktopKey=event.isCtrlPressed()||event.isAltPressed()||event.isMetaPressed()||pressed.contains(code)
-            ||code==17||code==18||code==91||code==27||code==9||code>=33&&code<=40||code==45||code==46||code>=112&&code<=123;
-        if(ready&&session!=null&&!pictureInPictureUi&&hasWindowFocus()&&(!(focus instanceof EditText)||remoteEditor&&(!((RemoteKeyboardInput)focus).isAcceptingInput()||desktopKey))&&event.getKeyCode()!=KeyEvent.KEYCODE_BACK&&code!=0){
-            boolean down=event.getAction()==KeyEvent.ACTION_DOWN;
+            ||code==17||code==18||code==19||code==20||code==27||code==9||code>=33&&code<=40
+            ||code==44||code==45||code==46||code==91||code==92||code==93
+            ||code>=0x60&&code<=0x6F||code>=112&&code<=123||code==0x90||code==0x91;
+        int action=event.getAction();
+        if((action==KeyEvent.ACTION_DOWN||action==KeyEvent.ACTION_UP)&&ready&&session!=null&&!pictureInPictureUi&&hasWindowFocus()&&(!(focus instanceof EditText)||remoteEditor&&(!((RemoteKeyboardInput)focus).isAcceptingInput()||desktopKey))&&event.getKeyCode()!=KeyEvent.KEYCODE_BACK&&code!=0){
+            boolean down=action==KeyEvent.ACTION_DOWN;
             if(down){pressed.add(code);if(remoteEditor)controls.resetKeyboardContext();}else pressed.remove(code);
             session.key(code,down);return true;
         }

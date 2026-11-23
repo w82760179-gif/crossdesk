@@ -29,7 +29,7 @@ final class RemoteVideoSettings {
         // Small screens need no more than 720p; larger screens start at 1080p.
         // All quality/frame-rate choices remain available for manual adjustment.
         int policy = preference >= 0 && preference <= 2 ? preference : DEFAULT_PREFERENCE;
-        int rate = policy == 0 ? 60 : 30;
+        int rate = 60;
         selection=applied=new Values(displayLongEdge>0&&displayLongEdge<=1280?0:1,rate,policy);
     }
     void setSupported(boolean value){supported=value;if(!value){selection=applied;pending=false;failed=false;}}

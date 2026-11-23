@@ -11,6 +11,7 @@
 #include <wtsapi32.h>
 
 #include <algorithm>
+#include <cstring>
 #include <vector>
 
 #include "../windows_thread_dpi.h"
@@ -369,9 +370,11 @@ class WindowsPrivacyBackend final : public PrivacyBackend {
           DWORD process_id = 0;
           GetClassNameA(above, window_class, sizeof(window_class));
           GetWindowThreadProcessId(above, &process_id);
+          if (std::strncmp(window_class, "WeType.NativeCandidate.", 23) == 0) {
+            continue;
+          }
           const auto now = GetTickCount64();
-          if (above != last_obstruction_ ||
-              now - last_obstruction_log_ >= 1000) {
+          if (now - last_obstruction_log_ >= 5000) {
             LOG_WARN(
                 "Potential privacy cover overlap: class={}, process={}, "
                 "band={}, bounds=({}, {})-({}, {}), exstyle=0x{:x}",

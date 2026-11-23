@@ -31,6 +31,11 @@ bool PreferSideSpecificVkInjection(int key_code) {
   }
 }
 
+bool IsNumpadDigitOrDecimalVk(int key_code) {
+  return (key_code >= VK_NUMPAD0 && key_code <= VK_NUMPAD9) ||
+         key_code == VK_DECIMAL;
+}
+
 }  // namespace
 
 thread_local PlatformKeyboardCapturer*
@@ -342,6 +347,7 @@ bool PlatformKeyboardCapturer::HandleKeyboardInput(
 // Apply remote keyboard commands to the local machine.
 int PlatformKeyboardCapturer::SendKeyboardCommand(int key_code, bool is_down,
                                           uint32_t scan_code, bool extended) {
+  const bool had_explicit_scan_code = scan_code != 0;
   if (scan_code == 0) {
     // Some layouts omit the E0 prefix for navigation keys in MapVirtualKey.
     // Preserve explicit metadata, including non-extended numpad navigation.
@@ -352,7 +358,12 @@ int PlatformKeyboardCapturer::SendKeyboardCommand(int key_code, bool is_down,
   input.ki.dwExtraInfo =
       static_cast<ULONG_PTR>(kInjectedKeyboardInputMarker);
 
-  const bool prefer_vk = PreferSideSpecificVkInjection(key_code);
+  // Mobile/VK-only controllers send VK_NUMPAD0..9 / VK_DECIMAL only when their
+  // local keypad is in numeric mode. Inject via wVk so host NumLock=OFF does
+  // not silently turn numeric keypad input into navigation keys.
+  const bool prefer_vk =
+      PreferSideSpecificVkInjection(key_code) ||
+      (!had_explicit_scan_code && IsNumpadDigitOrDecimalVk(key_code));
   const UINT resolved_scan_code =
       scan_code != 0
           ? static_cast<UINT>(scan_code & 0xFF) | (extended ? 0xE000u : 0u)
