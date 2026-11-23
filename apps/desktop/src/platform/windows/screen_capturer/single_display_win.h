@@ -300,7 +300,7 @@ class WindowsSingleDisplayGuard {
     if (index >= modes.size() || modes[index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
       return {};
     const auto& mode = modes[index].sourceMode;
-    if (mode.width != kWidth || mode.height != kHeight ||
+    if (mode.width == 0 || mode.height == 0 ||
         mode.position.x != 0 || mode.position.y != 0) return {};
     return path;
   }

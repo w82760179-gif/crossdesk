@@ -27,7 +27,7 @@ final class RemoteVideoSettings {
         // maximum resolution vary, and AV1 may still need software fallback.
         // Small screens need no more than 720p; larger screens start at 1080p.
         // All quality/frame-rate choices remain available for manual adjustment.
-        selection=applied=new Values(displayLongEdge>0&&displayLongEdge<=1280?0:1,30,preference>=0&&preference<=2?preference:1);
+        selection=applied=new Values(displayLongEdge>0&&displayLongEdge<=1280?0:1,60,preference>=0&&preference<=2?preference:1);
     }
     void setSupported(boolean value){supported=value;if(!value){selection=applied;pending=false;failed=false;}}
     long begin(Values value){

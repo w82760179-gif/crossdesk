@@ -321,12 +321,7 @@ int SessionDeviceManager::InitializeScreenCapturer() {
 }
 
 bool SessionDeviceManager::ShouldCaptureCursor() const {
-  std::shared_lock lock(owner_.connection_status_mutex_);
-  return std::any_of(owner_.connection_status_.begin(),
-                     owner_.connection_status_.end(), [](const auto& entry) {
-    return entry.second == MiniRtcConnectionStatus::MiniRtcConnectionConnected &&
-           entry.first.find("web") != std::string::npos;
-  });
+  return HasConnectedController();
 }
 
 bool SessionDeviceManager::HasConnectedController() const {
