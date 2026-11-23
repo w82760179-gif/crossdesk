@@ -355,7 +355,7 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         // Button and wheel messages already carry the current position.
         if (nextX != x || nextY != y) mouseInput.move(nextX, nextY);
         updateMouseEventButtons(e);
-        if (action == MotionEvent.ACTION_HOVER_MOVE && relative && captureMouse && !hasPointerCapture()) {
+        if (action == MotionEvent.ACTION_HOVER_MOVE && captureMouse && !hasPointerCapture()) {
             requestFocus();
             requestPointerCapture();
         }
@@ -381,7 +381,7 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         if (!captured) {implicitPrimary=false;updateHardwareButtons(0);}
     }
     @Override public boolean onCapturedPointerEvent(MotionEvent e) {
-        if (pictureInPicture || !relative || viewport.width() <= 0 || viewport.height() <= 0) return true;
+        if (pictureInPicture || !captureMouse || viewport.width() <= 0 || viewport.height() <= 0) return true;
         int action = e.getActionMasked();
         if (action == MotionEvent.ACTION_MOVE || action == MotionEvent.ACTION_HOVER_MOVE) {
             float dx = e.getX(), dy = e.getY();
