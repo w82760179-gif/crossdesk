@@ -101,6 +101,11 @@ bool GuiRuntime::ApplyHostDisplayResolution(const DisplayResolutionChange &chang
   std::lock_guard lock(native_display_resolution_mutex);
 #ifdef _WIN32
   if (!IsCurrentSessionUserDesktopActive()) return false;
+  if (!windows_single_display_guard.capture_display().empty()) {
+    // Virtual display topology is restored wholesale on disconnect by
+    // windows_single_display_guard; never enqueue it into physical restoration.
+    return ApplyWindowsDisplayResolution(displays, change);
+  }
   return display_resolution_restoration_.Apply(change.display_key,
       [&] { return CaptureWindowsDisplayResolution(displays, change); },
       [&] { return ApplyWindowsDisplayResolution(displays, change); });
@@ -276,10 +281,15 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
     // Connected and metadata callbacks can interleave with this tick. Keep
     // early preferences pending until admission has actually been committed.
     if (!active()) continue;
-    for (const auto &preference : startup.state.preferences) {
 #ifdef _WIN32
-      if (!windows_single_display_guard.capture_display().empty()) break;
+    if (!windows_single_display_guard.capture_display().empty()) {
+      const auto active_list = devices_.display_info_list();
+      const bool ready = !active_list.empty() &&
+          active_list[0].name == windows_single_display_guard.capture_display();
+      if (!ready) continue;
+    }
 #endif
+    for (const auto &preference : startup.state.preferences) {
       RestoreHostDisplayResolutions();
       if (!active()) break;
       const auto available = QueryHostDisplayResolutions();
@@ -323,12 +333,7 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
     RemoteAction reply;
     reply.type = ControlType::display_resolution_status;
     reply.resolution_change = command.change;
-#ifdef _WIN32
-    const bool allow_mode_change = windows_single_display_guard.capture_display().empty();
-#else
-    const bool allow_mode_change = true;
-#endif
-    reply.resolution_change.accepted = allow_mode_change &&
+    reply.resolution_change.accepted =
         ApplyHostDisplayResolution(command.change);
     reply.display_resolutions = QueryHostDisplayResolutions();
     const auto message = reply.to_json();

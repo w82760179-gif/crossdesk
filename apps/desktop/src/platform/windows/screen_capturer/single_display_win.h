@@ -534,9 +534,7 @@ class WindowsSingleDisplayGuard {
     if (index >= modes.size() || modes[index].infoType != DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE)
       return {};
     const auto& mode = modes[index].sourceMode;
-    if (!((mode.width == kWidth && mode.height == kHeight) ||
-          (mode.width == kHighWidth && mode.height == kHighHeight) ||
-          (mode.width == kCompactWidth && mode.height == kCompactHeight)) ||
+    if (mode.width < 640 || mode.height < 480 ||
         mode.position.x != 0 || mode.position.y != 0)
       return {};
     return *target;
