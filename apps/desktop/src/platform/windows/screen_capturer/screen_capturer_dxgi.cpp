@@ -1,5 +1,6 @@
 #include "screen_capturer_dxgi.h"
 
+#include <mmsystem.h>
 #include <display_stream_id.h>
 
 #include <algorithm>
@@ -19,6 +20,22 @@
 namespace crossdesk {
 
 namespace {
+class ScopedTimerResolution {
+ public:
+  explicit ScopedTimerResolution(UINT period_ms)
+      : period_ms_(period_ms),
+        active_(timeBeginPeriod(period_ms) == TIMERR_NOERROR) {}
+  ~ScopedTimerResolution() {
+    if (active_) timeEndPeriod(period_ms_);
+  }
+  ScopedTimerResolution(const ScopedTimerResolution&) = delete;
+  ScopedTimerResolution& operator=(const ScopedTimerResolution&) = delete;
+
+ private:
+  UINT period_ms_;
+  bool active_;
+};
+
 std::wstring GetOutputDeviceId(const std::wstring& device_name) {
   DISPLAY_DEVICEW device{sizeof(device)};
   if (!EnumDisplayDevicesW(device_name.c_str(), 0, &device,
@@ -429,6 +446,7 @@ bool ScreenCapturerDxgi::ConvertFrame(int frame_monitor, bool* cursor_embedded,
 }
 
 void ScreenCapturerDxgi::CaptureLoop() {
+  ScopedTimerResolution timer_resolution(1);
   ScopedWindowsPhysicalCoordinates physical_coordinates;
   CursorFrameCompositor cursor_compositor;
   const int timeout_ms = (std::max)(1, 1000 / (std::max)(1, fps_));
