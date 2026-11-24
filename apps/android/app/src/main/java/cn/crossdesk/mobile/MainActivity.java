@@ -519,8 +519,8 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         return new SegmentedControl(ui,titles,selected,enabled,changed);
     }
     private boolean saveServer(EditText address,EditText number){
-        String name=address.getText().toString().trim();int value;try{value=Integer.parseInt(number.getText().toString());}catch(NumberFormatException e){number.setError(L10n.tr("请输入 1–65535 范围内的端口"));return false;}
-        if(name.length()>253||!name.matches("[A-Za-z0-9.-]+")||name.startsWith(".")||name.endsWith(".")){address.setError(L10n.tr("填写主机名或 IPv4 地址，不含协议和路径"));return false;}if(value<1||value>65535){number.setError(L10n.tr("端口范围为 1–65535"));return false;}host=name;port=value;preferences.edit().putString("host",host).putInt("port",port).apply();ensureSignaling();return true;
+        String name=ServerAddress.normalize(address.getText().toString());int value;try{value=Integer.parseInt(number.getText().toString());}catch(NumberFormatException e){number.setError(L10n.tr("请输入 1–65535 范围内的端口"));return false;}
+        if(name==null){address.setError(L10n.tr("填写主机名或 IPv4 地址，可附带路径（如 host/path）"));return false;}if(value<1||value>65535){number.setError(L10n.tr("端口范围为 1–65535"));return false;}host=name;port=value;preferences.edit().putString("host",host).putInt("port",port).apply();ensureSignaling();return true;
     }
     private void announcements(){
         installRoot("announcements",false);LinearLayout bar=navigation(L10n.tr("通知公告"),()->home(""));
