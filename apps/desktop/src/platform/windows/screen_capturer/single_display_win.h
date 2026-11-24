@@ -102,10 +102,10 @@ class WindowsSingleDisplayGuard {
     return true;
   }
 
-  bool Restore() {
+  bool Restore(DWORD wait_ms = 0) {
     capture_display_.clear();
     stopping_ = true;
-    if (!worker_.Stop()) return false;
+    if (!worker_.Stop(wait_ms)) return false;
     stopping_ = false;
     return true;
   }
@@ -147,19 +147,19 @@ class WindowsSingleDisplayGuard {
           return 0;
         }
       }
-      // Wake the physical outputs while hotplug settles, or expose the
-      // available physical layout if a monitor was unplugged during control.
-      if (!active.Apply(false) && i >= 2) {
+      // Never run SDC_TOPOLOGY_EXTEND while all original physical monitors are
+      // still attached: temporary lock-screen denials or slow DPMS wakeups
+      // would otherwise scramble primary/secondary assignment and coordinates.
+      // Only fall back to available physical monitors when a monitor was
+      // genuinely unplugged, and never overwrite the saved display database.
+      if (i >= 9 && MissingPhysicalTarget(active)) {
         SetDisplayConfig(0, nullptr, 0, nullptr, SDC_APPLY | SDC_TOPOLOGY_EXTEND);
         DetachLiveVirtual();
-      }
-      if (i >= 9 && MissingPhysicalTarget(active)) {
         Layout available;
         if (available.Read(QDC_ONLY_ACTIVE_PATHS) &&
             KeepPhysicalPaths(available.paths, available.modes) &&
-            available.Apply(true) && available.Matches(QDC_ONLY_ACTIVE_PATHS) &&
-            available.Matches(QDC_DATABASE_CURRENT)) {
-          LOG_WARN("Tablet display: restored available physical outputs after hotplug");
+            available.Apply(false) && available.Matches(QDC_ONLY_ACTIVE_PATHS)) {
+          LOG_WARN("Tablet display: restored available physical outputs after monitor hotplug (preserved saved DB)");
           return 0;
         }
       }

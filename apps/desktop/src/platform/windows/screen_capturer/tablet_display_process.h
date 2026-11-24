@@ -69,10 +69,10 @@ class TabletDisplayProcess {
     return true;
   }
 
-  bool Stop() {
+  bool Stop(DWORD wait_ms = 0) {
     if (!started()) return true;
     SetEvent(stop_.value);
-    if (WaitForSingleObject(process_.value, 0) != WAIT_OBJECT_0) return false;
+    if (WaitForSingleObject(process_.value, wait_ms) != WAIT_OBJECT_0) return false;
     process_.reset();
     ready_.reset();
     stop_.reset();

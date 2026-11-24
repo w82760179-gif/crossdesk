@@ -155,7 +155,7 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
   }
 #ifdef _WIN32
   if (windows_single_display_guard.Tracked()) {
-    if (windows_single_display_guard.Restore()) {
+    if (windows_single_display_guard.Restore(force ? 5000 : 0)) {
       devices_.SetWindowsSessionDisplay({});
       LOG_INFO("Restored original multi-display topology after remote control");
     } else if (disconnected || force) {
