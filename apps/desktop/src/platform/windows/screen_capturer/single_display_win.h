@@ -426,24 +426,24 @@ class WindowsSingleDisplayGuard {
     mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
     mode.id = target->sourceInfo.id;
     mode.adapterId = target->sourceInfo.adapterId;
-    // 7:5 tablet presets matched to MttVDD modes: default 2400x1696 for
-    // crisp 60 fps headroom; override via tablet-display.ini
-    // [tablet] width=1650 | 2400 | 3000.
+    // 7:5 tablet presets matched to MttVDD modes: default 1650x1166 for
+    // 1:1 medium-quality 90 fps without CPU scaling; override via
+    // tablet-display.ini [tablet] width=1650 | 2400 | 3000.
     wchar_t module[32768]{};
     DWORD length = GetModuleFileNameW(nullptr, module, 32768);
     auto config = std::filesystem::path(module).parent_path() / L"tablet-display.ini";
     const UINT32 configured_width =
-        length ? GetPrivateProfileIntW(L"tablet", L"width", kHighWidth, config.c_str())
-               : kHighWidth;
+        length ? GetPrivateProfileIntW(L"tablet", L"width", kCompactWidth, config.c_str())
+               : kCompactWidth;
     if (configured_width == kWidth) {
       mode.sourceMode.width = kWidth;
       mode.sourceMode.height = kHeight;
-    } else if (configured_width == kCompactWidth) {
-      mode.sourceMode.width = kCompactWidth;
-      mode.sourceMode.height = kCompactHeight;
-    } else {
+    } else if (configured_width == kHighWidth) {
       mode.sourceMode.width = kHighWidth;
       mode.sourceMode.height = kHighHeight;
+    } else {
+      mode.sourceMode.width = kCompactWidth;
+      mode.sourceMode.height = kCompactHeight;
     }
     mode.sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
     Layout exclusive{{*target}, {mode}};
@@ -473,9 +473,54 @@ class WindowsSingleDisplayGuard {
       LOG_WARN("Tablet display: SetDisplayConfig failed, status={}", status);
       return false;
     }
+    PromoteVirtualRefreshRate(SourceName(*target), mode.sourceMode.width,
+                              mode.sourceMode.height, 90);
     LOG_INFO("Tablet display: applied {}x{} exclusive mode",
              mode.sourceMode.width, mode.sourceMode.height);
     return true;
+  }
+
+  static void PromoteVirtualRefreshRate(const std::wstring& device,
+                                        UINT32 width, UINT32 height,
+                                        DWORD preferred_hz) {
+    if (device.empty()) return;
+    DEVMODEW current{};
+    current.dmSize = sizeof(current);
+    if (!EnumDisplaySettingsExW(device.c_str(), ENUM_CURRENT_SETTINGS, &current, 0))
+      return;
+    DEVMODEW best{};
+    DWORD best_hz = current.dmDisplayFrequency;
+    bool exact = (current.dmDisplayFrequency == preferred_hz);
+    for (DWORD i = 0;; ++i) {
+      DEVMODEW dm{};
+      dm.dmSize = sizeof(dm);
+      if (!EnumDisplaySettingsExW(device.c_str(), i, &dm, 0)) break;
+      if (dm.dmPelsWidth != width || dm.dmPelsHeight != height ||
+          dm.dmBitsPerPel != 32)
+        continue;
+      if (dm.dmDisplayFrequency == preferred_hz) {
+        best = dm;
+        best_hz = dm.dmDisplayFrequency;
+        exact = true;
+        break;
+      }
+      if (!exact && dm.dmDisplayFrequency > best_hz &&
+          dm.dmDisplayFrequency <= 120) {
+        best = dm;
+        best_hz = dm.dmDisplayFrequency;
+      }
+    }
+    if (best_hz <= current.dmDisplayFrequency || best.dmSize == 0) return;
+    best.dmFields = DM_PELSWIDTH | DM_PELSHEIGHT | DM_BITSPERPEL | DM_DISPLAYFREQUENCY;
+    const LONG rc = ChangeDisplaySettingsExW(device.c_str(), &best, nullptr,
+                                             CDS_UPDATEREGISTRY, nullptr);
+    if (rc == DISP_CHANGE_SUCCESSFUL) {
+      LOG_INFO("Tablet display: promoted {}x{} refresh rate {} -> {} Hz",
+               width, height, current.dmDisplayFrequency, best_hz);
+    } else {
+      LOG_WARN("Tablet display: failed to promote refresh rate to {} Hz (rc={})",
+               best_hz, rc);
+    }
   }
 
   static std::optional<DISPLAYCONFIG_PATH_INFO> ActiveVirtualSource(UINT32 query = QDC_ONLY_ACTIVE_PATHS) {

@@ -326,7 +326,7 @@ int GuiRuntime::CreateConnectionPeer() {
   // Bootstrap outgoing media with fixed defaults. Live overrides come only
   // from the authorized controller and apply to its connection on this host.
   params_.video_quality = MiniRtcVideoQuality::MiniRtcVideoQualityHigh;
-  params_.video_frame_rate = 60;
+  params_.video_frame_rate = 90;
   params_.video_degradation_preference =
       MiniRtcVideoDegradationPreference::MaintainResolution;
   params_.on_receive_video_buffer = nullptr;

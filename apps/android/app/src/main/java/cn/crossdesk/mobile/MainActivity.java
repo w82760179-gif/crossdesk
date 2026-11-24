@@ -162,6 +162,22 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         if(android.os.Build.VERSION.SDK_INT>=28){
             WindowManager.LayoutParams lp=getWindow().getAttributes();
             lp.layoutInDisplayCutoutMode=dark?WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES:WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_DEFAULT;
+            if(dark){
+                float bestRate=0f;int bestModeId=0;
+                try{
+                    android.view.Display display=android.os.Build.VERSION.SDK_INT>=30?getDisplay():getWindowManager().getDefaultDisplay();
+                    if(display!=null){
+                        android.view.Display.Mode current=display.getMode();
+                        for(android.view.Display.Mode m:display.getSupportedModes()){
+                            if(current!=null&&(m.getPhysicalWidth()!=current.getPhysicalWidth()||m.getPhysicalHeight()!=current.getPhysicalHeight()))continue;
+                            if(m.getRefreshRate()>bestRate){bestRate=m.getRefreshRate();bestModeId=m.getModeId();}
+                        }
+                    }
+                }catch(Throwable ignored){}
+                if(bestModeId!=0&&bestRate>=89f){lp.preferredDisplayModeId=bestModeId;lp.preferredRefreshRate=bestRate;}
+            }else{
+                lp.preferredDisplayModeId=0;lp.preferredRefreshRate=0f;
+            }
             getWindow().setAttributes(lp);
         }
         if(android.os.Build.VERSION.SDK_INT>=30){
@@ -361,7 +377,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         dialog.setContentView(card);dialog.setCanceledOnTouchOutside(false);dialog.setOnCancelListener(d->end(""));Window w=dialog.getWindow();if(w!=null){w.setBackgroundDrawableResource(android.R.color.transparent);w.setDimAmount(.08f);}dialog.show();if(w!=null)w.setLayout(dp(292),-2);
     }
     private void sessionScreen(boolean autoLandscape){
-        installRoot("session",true);remoteOrientation.begin(autoLandscape,!isTablet()&&!isInMultiWindowMode());video=new RemoteVideoView(this,session);video.setRelative(preferences.getBoolean("relativeMouse",false));
+        installRoot("session",true);remoteOrientation.begin(autoLandscape,!isTablet()&&!isInMultiWindowMode());video=new RemoteVideoView(this,session);video.targetFrameRate(videoSettings.applied.frameRate);video.setRelative(preferences.getBoolean("relativeMouse",false));
         // Immersive full-bleed video across the entire display (including cutout/bars)
         // while keeping floating controls in safeArea.
         boolean fillScreen=preferences.getBoolean("fillScreen",!isTablet());
@@ -786,7 +802,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             return;
         }
         if(message.optInt("type",-1)==5){JSONObject service=message.optJSONObject("service_status");remoteServiceAvailable=service!=null&&service.optBoolean("available",false);return;}
-        if(message.optInt("type",-1)==12){if(!ready)return;videoSettings.receive(message);if(!videoSettings.pending)cancelVideoSettingsTimeout();if(controls!=null)controls.videoSettings(videoSettings);return;}
+        if(message.optInt("type",-1)==12){if(!ready)return;videoSettings.receive(message);if(!videoSettings.pending)cancelVideoSettingsTimeout();if(video!=null)video.targetFrameRate(videoSettings.applied.frameRate);if(controls!=null)controls.videoSettings(videoSettings);return;}
         JSONObject info=message.optJSONObject("host_info");
         if(info!=null){
             hostPlatform=info.optString("platform","");JSONArray list=info.optJSONArray("displays");if(list!=null)displays=list;history.metadata(serverKey(),connectedRemote,info.optString("host_name",connectedRemote),hostPlatform);

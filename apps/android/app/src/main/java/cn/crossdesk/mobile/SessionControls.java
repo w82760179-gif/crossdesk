@@ -275,7 +275,7 @@ final class SessionControls extends FrameLayout {
                 renderVirtualScale();
             }
             settingRows.add(new SettingRow(body,0,L10n.tr("画面质量"),new String[]{L10n.tr("低"),L10n.tr("中"),L10n.tr("高")},new int[]{0,1,2}));ui.gap(body,12);
-            settingRows.add(new SettingRow(body,1,L10n.tr("画面采集帧率"),new String[]{"30 fps","60 fps"},new int[]{30,60}));ui.gap(body,12);
+            settingRows.add(new SettingRow(body,1,L10n.tr("画面采集帧率"),new String[]{"30 fps","60 fps","90 fps"},new int[]{30,60,90}));ui.gap(body,12);
             settingRows.add(new SettingRow(body,2,L10n.tr("画面偏好"),RemoteVideoSettings.preferences(),new int[]{0,1,2}));renderVideoSettings();
             ui.gap(body,12);
             TextView scaleTitle=ui.text("画面覆盖模式",12,false);scaleTitle.setTextColor(SECONDARY);body.addView(scaleTitle);ui.gap(body,5);

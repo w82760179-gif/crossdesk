@@ -54,7 +54,7 @@ void GuiRuntime::InitializeLan() {
         config_center_->IsReceiverPaddingProbingDisabled();
     params.video_content_type = MiniRtcVideoContentType::ScreenContent;
     params.video_quality = MiniRtcVideoQuality::MiniRtcVideoQualityHigh;
-    params.video_frame_rate = 60;
+    params.video_frame_rate = 90;
     params.video_degradation_preference =
         MiniRtcVideoDegradationPreference::MaintainResolution;
     params.on_receive_video_frame = PeerEventHandler::OnReceiveVideoBuffer;

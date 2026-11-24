@@ -202,7 +202,7 @@ struct VideoCodecStatus {
 
 inline bool ValidVideoSettings(const VideoSettings& settings) {
   return settings.quality >= 0 && settings.quality <= 2 &&
-         (settings.frame_rate == 30 || settings.frame_rate == 60) &&
+         (settings.frame_rate == 30 || settings.frame_rate == 60 || settings.frame_rate == 90) &&
          settings.preference >= 0 && settings.preference <= 2;
 }
 

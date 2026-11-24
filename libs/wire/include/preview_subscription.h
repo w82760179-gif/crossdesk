@@ -94,7 +94,7 @@ struct PreviewSubscription {
       if ((result.fps != 0 && result.fps != 1 && result.fps != 8 &&
            result.fps != 15 && result.fps != 60) ||
           result.quality < 0 || result.quality > 2 ||
-          (result.frame_rate != 30 && result.frame_rate != 60) ||
+          (result.frame_rate != 30 && result.frame_rate != 60 && result.frame_rate != 90) ||
           result.preference < 0 || result.preference > 2)
         return {};
       if (json.contains("audio")) {

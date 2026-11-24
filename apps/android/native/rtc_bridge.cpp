@@ -288,7 +288,7 @@ MiniRtcParams Parameters(Session* s, bool controller) {
   p.enable_srtp = true;
   p.video_content_type = MiniRtcVideoContentType::ScreenContent;
   p.video_quality = MiniRtcVideoQualityMedium;
-  p.video_frame_rate = 60;
+  p.video_frame_rate = 90;
   p.video_degradation_preference = MiniRtcVideoDegradationPreference::MaintainResolution;
   p.on_signal_status = Signal; p.on_connection_status = Connection;
   p.on_signal_message = SignalMessage;

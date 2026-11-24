@@ -450,6 +450,16 @@ void ScreenCapturerDxgi::CaptureLoop() {
   ScopedWindowsPhysicalCoordinates physical_coordinates;
   CursorFrameCompositor cursor_compositor;
   const int timeout_ms = (std::max)(1, 1000 / (std::max)(1, fps_));
+  const auto frame_interval =
+      std::chrono::nanoseconds(std::chrono::seconds(1)) / (std::max)(1, fps_);
+  auto next_frame_deadline = std::chrono::steady_clock::now() + frame_interval;
+  const auto advance_deadline = [&] {
+    const auto done = std::chrono::steady_clock::now();
+    next_frame_deadline += frame_interval;
+    if (next_frame_deadline <= done) {
+      next_frame_deadline = done + frame_interval;
+    }
+  };
   bool cached_frame_valid = false;
   bool cached_cursor_embedded = false;
   int cached_monitor = -1;
@@ -517,12 +527,23 @@ void ScreenCapturerDxgi::CaptureLoop() {
     };
     DXGI_OUTDUPL_FRAME_INFO frame_info{};
     Microsoft::WRL::ComPtr<IDXGIResource> desktop_resource;
+    const auto wait_now = std::chrono::steady_clock::now();
+    int wait_ms = 0;
+    if (next_frame_deadline > wait_now) {
+      wait_ms = static_cast<int>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              next_frame_deadline - wait_now)
+              .count());
+      if (wait_ms == 0) wait_ms = 1;
+    }
+    wait_ms = (std::min)(wait_ms, timeout_ms);
     HRESULT hr = duplication_->AcquireNextFrame(
-        timeout_ms, &frame_info, desktop_resource.GetAddressOf());
+        wait_ms, &frame_info, desktop_resource.GetAddressOf());
     if (hr == DXGI_ERROR_WAIT_TIMEOUT) {
       // DXGI explicitly reports an unchanged desktop. Re-emit only a frame
       // successfully acquired for this monitor to keep delivering static frames.
       deliver_cached();
+      advance_deadline();
       continue;
     }
     // Never replay a cached image after an acquisition/conversion failure or
@@ -561,6 +582,7 @@ void ScreenCapturerDxgi::CaptureLoop() {
         next_topology_check = std::chrono::steady_clock::now();
       } else {
         deliver_cached();
+        advance_deadline();
       }
       continue;
     }
@@ -636,6 +658,7 @@ void ScreenCapturerDxgi::CaptureLoop() {
       cached_cursor_embedded = cursor_embedded;
       cached_monitor = frame_monitor;
       cached_frame_valid = true;
+      advance_deadline();
     }
   }
 }

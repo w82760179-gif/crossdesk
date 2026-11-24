@@ -6,10 +6,10 @@
 int main() {
   using namespace crossdesk;
   for (int quality = -1; quality <= 3; ++quality)
-    for (int rate : {0, 24, 30, 60, 120})
+    for (int rate : {0, 24, 30, 60, 90, 120})
       for (int preference = -1; preference <= 3; ++preference) {
         const auto message = android_controller::VideoSettingsMessage(quality, rate, preference, UINT32_MAX);
-        const bool valid = quality >= 0 && quality <= 2 && (rate == 30 || rate == 60) && preference >= 0 && preference <= 2;
+        const bool valid = quality >= 0 && quality <= 2 && (rate == 30 || rate == 60 || rate == 90) && preference >= 0 && preference <= 2;
         assert(message.empty() != valid);
         if (!valid) continue;
         // Decode the actual Android outgoing message with the desktop's wire parser.

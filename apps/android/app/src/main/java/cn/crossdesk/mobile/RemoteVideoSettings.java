@@ -13,7 +13,7 @@ final class RemoteVideoSettings {
     static final class Values {
         final int quality,frameRate,preference;
         Values(int quality,int frameRate,int preference){this.quality=quality;this.frameRate=frameRate;this.preference=preference;}
-        boolean valid(){return quality>=0&&quality<=2&&(frameRate==30||frameRate==60)&&preference>=0&&preference<=2;}
+        boolean valid(){return quality>=0&&quality<=2&&(frameRate==30||frameRate==60||frameRate==90)&&preference>=0&&preference<=2;}
         JSONObject status(long requestId,boolean accepted){
             try{return new JSONObject().put("type",12).put("video_settings",new JSONObject().put("quality",quality).put("frame_rate",frameRate).put("preference",preference).put("request_id",requestId).put("accepted",accepted));}
             catch(org.json.JSONException impossible){throw new IllegalStateException(impossible);}
@@ -29,7 +29,7 @@ final class RemoteVideoSettings {
         // Small screens need no more than 720p; larger screens start at 1080p.
         // All quality/frame-rate choices remain available for manual adjustment.
         int policy = preference >= 0 && preference <= 2 ? preference : DEFAULT_PREFERENCE;
-        int rate = 60;
+        int rate = displayLongEdge>0&&displayLongEdge<=1280?60:90;
         selection=applied=new Values(displayLongEdge>0&&displayLongEdge<=1280?0:1,rate,policy);
     }
     void setSupported(boolean value){supported=value;if(!value){selection=applied;pending=false;failed=false;}}
@@ -51,7 +51,7 @@ final class RemoteVideoSettings {
                 Object value=settings.get(key);if(!(value instanceof Integer)&&!(value instanceof Long))return;
             }
             long quality=settings.getLong("quality"),rate=settings.getLong("frame_rate"),preference=settings.getLong("preference");
-            if(quality<0||quality>2||(rate!=30&&rate!=60)||preference<0||preference>2)return;
+            if(quality<0||quality>2||(rate!=30&&rate!=60&&rate!=90)||preference<0||preference>2)return;
             Object accepted=settings.opt("accepted");if(accepted!=null&&!(accepted instanceof Boolean))return;
             receive(new Values((int)quality,(int)rate,(int)preference),settings.getLong("request_id"),Boolean.TRUE.equals(accepted));
         }catch(org.json.JSONException ignored){ }

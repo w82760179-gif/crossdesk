@@ -31,6 +31,7 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     private final RemoteViewport pictureInPictureViewport = new RemoteViewport();
     private boolean pictureInPicture;
     private int frameWidth = 16, frameHeight = 9;
+    private int targetFrameRate = 90;
     private float x = .5f, y = .5f, scrollY;
     private boolean dragging, twoFinger, relative, viewportGesture, viewportPanActive;
     private float lastX,lastY,twoFingerX,twoFingerY;
@@ -320,8 +321,25 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
         return total / Math.max(1,count);
     }
     @Override public boolean performClick() { super.performClick(); return true; }
-    @Override public void surfaceCreated(SurfaceHolder holder) { session.surface(holder.getSurface()); }
-    @Override public void surfaceChanged(SurfaceHolder holder,int format,int width,int height) { }
+    void targetFrameRate(int fps) {
+        targetFrameRate = fps > 0 ? fps : 90;
+        applySurfaceFrameRate(video.getHolder().getSurface());
+    }
+    private void applySurfaceFrameRate(android.view.Surface surface) {
+        if (surface == null || !surface.isValid()) return;
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 31) {
+                surface.setFrameRate((float) targetFrameRate,
+                    android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE,
+                    android.view.Surface.CHANGE_FRAME_RATE_ALWAYS);
+            } else if (android.os.Build.VERSION.SDK_INT >= 30) {
+                surface.setFrameRate((float) targetFrameRate,
+                    android.view.Surface.FRAME_RATE_COMPATIBILITY_FIXED_SOURCE);
+            }
+        } catch (Throwable ignored) { }
+    }
+    @Override public void surfaceCreated(SurfaceHolder holder) { applySurfaceFrameRate(holder.getSurface()); session.surface(holder.getSurface()); }
+    @Override public void surfaceChanged(SurfaceHolder holder,int format,int width,int height) { applySurfaceFrameRate(holder.getSurface()); }
     @Override public void surfaceDestroyed(SurfaceHolder holder) { releaseMouse(); session.surface(null); }
     private static boolean isHardwareMouse(MotionEvent e) {
         if (e.getToolType(0)==MotionEvent.TOOL_TYPE_FINGER &&
