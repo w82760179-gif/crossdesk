@@ -453,10 +453,10 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
             canvas.clipRect(viewport.left(),viewport.top(),viewport.left()+viewport.width(),viewport.top()+viewport.height());
             canvas.translate(viewport.left()+x*viewport.width(),viewport.top()+y*viewport.height());
             if(host.bitmap!=null){
-                float scale=(viewport.width()/host.desktopWidth)*0.80f;
+                float scale=(viewport.width()/host.desktopWidth)*0.68f;
                 float density=getResources().getDisplayMetrics().density;
-                float minBoxPx=20f*density;
-                float maxBoxPx=30f*density;
+                float minBoxPx=17f*density;
+                float maxBoxPx=25.5f*density;
                 float bitmapMax=Math.max(host.bitmap.getWidth(),host.bitmap.getHeight());
                 if(bitmapMax>0f){
                     float drawn=bitmapMax*scale;
@@ -469,7 +469,7 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
                     host.bitmap.getWidth()-host.hotX,host.bitmap.getHeight()-host.hotY),paint);
                 canvas.restoreToCount(saved); return;
             }
-            float density=getResources().getDisplayMetrics().density;canvas.scale(density*0.90f,density*0.90f);
+            float density=getResources().getDisplayMetrics().density;canvas.scale(density*0.76f,density*0.76f);
             if(host.shape==7){
                 paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.6f);paint.setColor(Color.BLACK);
                 canvas.drawLine(0,-8,0,8,paint);canvas.drawLine(-3,-8,3,-8,paint);canvas.drawLine(-3,8,3,8,paint);
