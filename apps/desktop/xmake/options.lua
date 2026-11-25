@@ -5,7 +5,7 @@ function setup_options_and_dependencies(enable_dependencies)
     option_end()
 
     option("CROSSDESK_VERSION")
-        set_default("1.8.0")
+        set_default("1.8.1")
         set_showmenu(true)
         set_description("Set CROSSDESK_VERSION for build")
     option_end()

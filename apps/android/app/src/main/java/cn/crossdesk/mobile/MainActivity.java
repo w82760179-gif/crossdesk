@@ -83,9 +83,9 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     private String host, connectedRemote="", hostPlatform="", remoteClipboard="", pendingPassword="", page="home";
     private int port,selectedDisplay;
     private JSONArray displays=new JSONArray();
-    private boolean muted,micEnabled,ready,rememberPassword;
+    private boolean muted,ready,rememberPassword;
     private boolean remoteServiceAvailable;
-    private static final int PICK_FILE=41,SAVE_FILE=42,REQUEST_MIC=44;
+    private static final int PICK_FILE=41,SAVE_FILE=42;
     private NativeSession documentSession;
     private java.io.File receivedFile,documentToSave;
     private final Runnable documentTimeout=()->{if(documentSession!=null&&!foreground)end(L10n.tr("文件选择已超时，会话已结束"));};
@@ -371,7 +371,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         resetRemoteVersionCheck();
         resetVideoSettings();
         previewCapture=previews.begin(serverKey(),id);previewCopying=false;previewAttempts=0;
-        connectedRemote=id;pendingPassword=rememberPassword?secret:"";ready=false;muted=false;micEnabled=false;selectedDisplay=0;hostPlatform="";remoteClipboard="";displays=new JSONArray();preferences.edit().putString("lastRemote",id).apply();
+        connectedRemote=id;pendingPassword=rememberPassword?secret:"";ready=false;muted=false;selectedDisplay=0;hostPlatform="";remoteClipboard="";displays=new JSONArray();preferences.edit().putString("lastRemote",id).apply();
         ensureSignaling();
         if(signaling==null){pendingPassword="";toast(L10n.tr("请先完成联网授权"));return;}
         session=signaling;showProgress();session.connect(id,secret);
@@ -415,12 +415,11 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             public boolean textEdit(int count,String value){return sendTextEdit(count,value);}
             public void chord(int code,int[] modifiers){if(ready&&session!=null)session.chord(code,modifiers);}public void shortcut(int code){MainActivity.this.shortcut(code);}public void text(String value){sendText(value);}
             public void mute(){muted=!muted;if(session!=null)session.control(2,muted?0:1);controls.setMuted(muted);}
-            public void mic(){toggleMic();}
             public void mouse(){boolean relative=!preferences.getBoolean("relativeMouse",false);preferences.edit().putBoolean("relativeMouse",relative).apply();video.setRelative(relative);controls.setRelative(relative);}
             public void displayResolution(RemoteDisplayResolutions.Mode mode){updateDisplayResolution(mode);}
             public void virtualDisplayScale(int percent){requestVirtualDisplayScale(percent);}
             public void videoSettings(int field,int value){RemoteVideoSettings.Values old=MainActivity.this.videoSettings.selection;updateVideoSettings(new RemoteVideoSettings.Values(field==0?value:old.quality,field==1?value:old.frameRate,field==2?value:old.preference));}
-        });controls.desktopInput=video;controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);controls.setRelative(preferences.getBoolean("relativeMouse",false));controls.setFillScreen(fillScreen);controls.setCaptureMouse(captureMouse);controls.setTabletTouch(tabletTouch);controls.setMuted(muted);controls.setMicEnabled(micEnabled);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        });controls.desktopInput=video;controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);controls.setRelative(preferences.getBoolean("relativeMouse",false));controls.setFillScreen(fillScreen);controls.setCaptureMouse(captureMouse);controls.setTabletTouch(tabletTouch);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);root.addView(controls,new LinearLayout.LayoutParams(-1,-1));getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         controls.attachMouseBar(canvas,new VirtualMouseBar(ui,video.mouseInput));
         privacyChanged();
         video.remoteFocusChanged=()->{if(controls!=null)controls.resetKeyboardContext();};
@@ -442,7 +441,6 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         resetRemoteVersionCheck();
         resetVideoSettings();
         previewCapture=null;previewCopying=false;
-        micEnabled=false;
         if(progressDialog!=null){progressDialog.dismiss();progressDialog=null;}if(session!=null){releaseKeys();session.close();session=null;}stopSignaling();pendingPassword="";remoteClipboard="";hostPlatform="";displays=new JSONArray();ready=false;video=null;controls=null;getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         if(closeWindow){finish();return;}
         home(reason);
@@ -780,9 +778,8 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         if (modeKey.equals(lastAutoScaledMode)) return;
         int saved = session.rememberedVirtualScale(display.current.width, display.current.height);
         lastAutoScaledMode = modeKey;
-        if (saved >= 100 && saved <= 500) {
-            requestVirtualDisplayScale(saved, true);
-        }
+        int target = (saved >= 100 && saved <= 500) ? saved : 125;
+        requestVirtualDisplayScale(target, true);
     }
 
     private void cancelDisplayResolutionTimeout(){if(displayResolutionTimeout!=null)mainHandler.removeCallbacks(displayResolutionTimeout);displayResolutionTimeout=null;}
@@ -998,7 +995,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         videoSettings=retained.videoSettings;displayResolutions=retained.displayResolutions;ready=true;retained.attach(this);
         if(rebuild)sessionScreen(retained.autoLandscape);
         if(retained.width>0&&retained.height>0)videoSize(retained.width,retained.height);
-        if(controls!=null){controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);controls.setMuted(muted);controls.setMicEnabled(micEnabled);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);controls.fileStatus(retained.fileStatus,receivedFile!=null);}
+        if(controls!=null){controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);controls.setMuted(muted);controls.videoSettings(videoSettings);controls.displayResolutions(displayResolutions,selectedDisplay);controls.fileStatus(retained.fileStatus,receivedFile!=null);}
         retained.setBackground(false);signaling(signalState,localIdentity);
         return true;
     }
@@ -1049,34 +1046,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     // onStart marks a new visit; focus/resume callbacks must not reopen a refused notice.
     @Override protected void onPause(){releaseKeys();if(controls!=null)controls.cancelMouseInput();if(video!=null){video.releasePointerCaptureSafe();video.releaseMouse();}super.onPause();}
     @Override protected void onStart(){super.onStart();foreground=true;restoreBackgroundSession();appUpdates.setEnabled(preferences.getBoolean("networkConsent",false));if(!preferences.getBoolean("networkConsent",false))consent(this::renderSignaling);ensureSignaling();showConnectionMessage();}
-    private void toggleMic(){
-        if(!ready||session==null)return;
-        if(micEnabled){setMicEnabled(false);return;}
-        if(checkSelfPermission(android.Manifest.permission.RECORD_AUDIO)!=android.content.pm.PackageManager.PERMISSION_GRANTED){
-            requestPermissions(new String[]{android.Manifest.permission.RECORD_AUDIO},REQUEST_MIC);
-            return;
-        }
-        setMicEnabled(true);
-    }
-    private void setMicEnabled(boolean enabled){
-        micEnabled=enabled&&ready&&session!=null;
-        if(session!=null)session.setMicEnabled(micEnabled,()->{
-            micEnabled=false;
-            if(controls!=null)controls.setMicEnabled(false);
-            toast(L10n.tr("麦克风启动失败，请检查录音权限"));
-        });
-        if(controls!=null)controls.setMicEnabled(micEnabled);
-        if(ready)toast(L10n.tr(micEnabled?"麦克风回传已开启":"麦克风回传已关闭"));
-    }
-    @Override public void onRequestPermissionsResult(int requestCode,String[] permissions,int[] grantResults){
-        super.onRequestPermissionsResult(requestCode,permissions,grantResults);
-        if(requestCode==REQUEST_MIC){
-            if(grantResults.length>0&&grantResults[0]==android.content.pm.PackageManager.PERMISSION_GRANTED){
-                if(ready&&session!=null)setMicEnabled(true);
-            }else toast(L10n.tr("未授予麦克风权限"));
-        }
-    }
-    @Override protected void onStop(){if(micEnabled)setMicEnabled(false);dismissPrivacyUnlockDialog();if(controls!=null)controls.closeKeyboard();foreground=false;appUpdates.setEnabled(false);if(privacyDialog!=null)privacyDialog.dismiss();pageHost.finish();
+    @Override protected void onStop(){dismissPrivacyUnlockDialog();if(controls!=null)controls.closeKeyboard();foreground=false;appUpdates.setEnabled(false);if(privacyDialog!=null)privacyDialog.dismiss();pageHost.finish();
         if(connectionDialog!=null)connectionDialog.dismiss();
         // Closing native PiP is an explicit end, not a request for invisible
         // fallback. An unavailable/failed PiP can hand its live session off.

@@ -113,8 +113,6 @@ public:
   // Open the output on the first frame and close it after the last stream ends.
   void ClearAudio(const std::string& remote_id);
   void PushAudio(const std::string& remote_id, const char *data, size_t size);
-  void PushRemoteMicAudio(const char *data, size_t size);
-  void StopRemoteMicAudio();
 
   bool SupportsTextInput() const;
   bool SendTextCommand(const std::string& text);

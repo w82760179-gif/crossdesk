@@ -64,7 +64,6 @@ struct Session {
   std::atomic<bool> surface_ready{false};
   std::atomic<uint64_t> video_generation{0};
   std::mutex render_mutex;
-  std::mutex audio_send_mutex;
   ANativeWindow* window = nullptr;
   uint32_t width = 0, height = 0;
   uint64_t frame_id = 0;
@@ -133,12 +132,9 @@ struct Session {
     }
     stopping = true;
     renderer.Stop();
-    {
-      std::lock_guard<std::mutex> lock(audio_send_mutex);
-      if (controller) {
-        MiniRtcLeaveConnection(controller, remote.c_str());
-        MiniRtcDestroyPeer(&controller);
-      }
+    if (controller) {
+      MiniRtcLeaveConnection(controller, remote.c_str());
+      MiniRtcDestroyPeer(&controller);
     }
     if (identity) MiniRtcDestroyPeer(&identity);
     Environment scope;
@@ -601,23 +597,5 @@ extern "C" JNIEXPORT void JNICALL JNI_METHOD(nSurface)(JNIEnv* env, jclass, jlon
     if (surface && s->controller && !s->stopping)
       MiniRtcRequestVideoKeyFrame(s->controller, MakeDisplayStreamId(s->display.load()).c_str());
   }
-}
-extern "C" JNIEXPORT void JNICALL JNI_METHOD(nSendAudio)(
-    JNIEnv* env, jclass, jlong handle, jbyteArray pcm) {
-  auto* s = From(handle);
-  if (!s || s->stopping || !pcm) return;
-  const auto size = env->GetArrayLength(pcm);
-  if (size != 960) return;
-  char buf[960];
-  env->GetByteArrayRegion(pcm, 0, 960, reinterpret_cast<jbyte*>(buf));
-  if (env->ExceptionCheck()) return;
-  std::lock_guard<std::mutex> lock(s->audio_send_mutex);
-  if (!s->controller || s->stopping) return;
-  MiniRtcAudioFrame frame{};
-  frame.data = buf;
-  frame.size = 960;
-  const int64_t ts = MiniRtcGetSystemTimeMicros(s->controller);
-  frame.captured_timestamp = ts > 0 ? static_cast<uint64_t>(ts) : 0;
-  MiniRtcSendAudioFrame(s->controller, &frame, kAudioStream);
 }
 extern "C" JNIEXPORT void JNICALL JNI_METHOD(nDestroy)(JNIEnv*, jclass, jlong handle) { delete From(handle); }

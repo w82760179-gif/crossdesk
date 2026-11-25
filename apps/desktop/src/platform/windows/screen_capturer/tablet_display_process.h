@@ -30,7 +30,7 @@ class TabletDisplayProcess {
     return running() && WaitForSingleObject(ready_.value, 0) == WAIT_OBJECT_0;
   }
 
-  bool Start() {
+  bool Start(UINT32 preferred_width = 0, UINT32 preferred_height = 0) {
     if (started()) return false;
     std::vector<wchar_t> module(32768);
     DWORD length = GetModuleFileNameW(nullptr, module.data(), static_cast<DWORD>(module.size()));
@@ -59,6 +59,11 @@ class TabletDisplayProcess {
       std::wstring args = L"\"" + helper.wstring() + L"\" --tablet-display";
       for (auto handle : handles)
         args += L" " + std::to_wstring(reinterpret_cast<uintptr_t>(handle));
+      if (preferred_width >= 640 && preferred_height >= 480 &&
+          preferred_width <= 32768 && preferred_height <= 32768) {
+        args += L" " + std::to_wstring(preferred_width) + L" " +
+                std::to_wstring(preferred_height);
+      }
       bool fallback = false;
       ok = CreatePrivacyCursorProcess(helper.c_str(), args, startup, child, fallback);
     }

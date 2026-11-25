@@ -237,7 +237,6 @@ void GuiRuntime::HandleServerControllerDisconnected(
 
   LOG_INFO("Last remote controller disconnected; recovering privacy, reason={}",
            reason ? reason : "unknown");
-  devices_.StopRemoteMicAudio();
   privacy_.Disconnected();
 
   need_to_create_server_window_.store(false, std::memory_order_release);

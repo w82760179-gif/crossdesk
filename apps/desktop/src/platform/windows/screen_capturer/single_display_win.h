@@ -35,6 +35,20 @@ class WindowsSingleDisplayGuard {
     }
   }
   const std::string& capture_display() const { return capture_display_; }
+  void SetPreferredMode(UINT32 width, UINT32 height) {
+    if (width >= 640 && height >= 480 && width <= 32768 && height <= 32768) {
+      preferred_width_ = width;
+      preferred_height_ = height;
+    }
+  }
+  void ClearPreferredMode() {
+    preferred_width_ = 0;
+    preferred_height_ = 0;
+  }
+  void NoteModeTransition() {
+    missing_output_polls_ = 0;
+    next_probe_ = GetTickCount64() + 1200;
+  }
 
   struct Scale {
     int percent = 0;
@@ -85,7 +99,8 @@ class WindowsSingleDisplayGuard {
     if (!worker_.started()) {
       if (now < next_probe_) return false;
       next_probe_ = now + 2000;
-      if (!worker_.Start()) return false;
+      missing_output_polls_ = 0;
+      if (!worker_.Start(preferred_width_, preferred_height_)) return false;
       deadline_ = now + 12000;
     }
     if (!worker_.running() || (!worker_.ready() && now >= deadline_))
@@ -94,8 +109,15 @@ class WindowsSingleDisplayGuard {
     if (!capture_display_.empty() && now < next_probe_) return true;
     next_probe_ = now + 500;
     const auto active = ActiveVirtualDisplayName();
-    if (active.empty() || (!capture_display_.empty() && active != capture_display_))
+    if (active.empty() || (!capture_display_.empty() && active != capture_display_)) {
+      if (!capture_display_.empty() && ++missing_output_polls_ < 4) {
+        LOG_WARN("Tablet display: transient virtual output miss ({}/4); holding active display",
+                 missing_output_polls_);
+        return true;
+      }
       return Fail("exclusive virtual output changed");
+    }
+    missing_output_polls_ = 0;
     if (capture_display_.empty())
       LOG_INFO("Tablet display: {} ready (exclusive)", active);
     capture_display_ = active;
@@ -104,6 +126,7 @@ class WindowsSingleDisplayGuard {
 
   bool Restore(DWORD wait_ms = 0) {
     capture_display_.clear();
+    missing_output_polls_ = 0;
     stopping_ = true;
     if (!worker_.Stop(wait_ms)) return false;
     stopping_ = false;
@@ -112,7 +135,9 @@ class WindowsSingleDisplayGuard {
 
   // Called only in the display helper process. Its parent supplies inherited
   // handles, so a recycled PID cannot keep a disconnected desktop black.
-  static int RunDisplayHelper(HANDLE parent, HANDLE stop, HANDLE ready) {
+  static int RunDisplayHelper(HANDLE parent, HANDLE stop, HANDLE ready,
+                              UINT32 preferred_width = 0,
+                              UINT32 preferred_height = 0) {
     HANDLE signals[] = {parent, stop};
     if (WaitForMultipleObjects(2, signals, FALSE, 0) != WAIT_TIMEOUT) return 1;
     HANDLE lease = AcquireLease();
@@ -123,7 +148,7 @@ class WindowsSingleDisplayGuard {
         std::all_of(active.paths.begin(), active.paths.end(), IsMttVdd) ||
         !active.Validate() || !database.Validate()) return 1;
     if (WaitForMultipleObjects(2, signals, FALSE, 0) != WAIT_TIMEOUT) return 0;
-    const bool applied = ApplyVirtualTopology();
+    const bool applied = ApplyVirtualTopology(preferred_width, preferred_height);
     if (!applied && active.Matches(QDC_ONLY_ACTIVE_PATHS) && database.Matches(QDC_DATABASE_CURRENT))
       return 1;
     bool confirmed = false;
@@ -418,7 +443,8 @@ class WindowsSingleDisplayGuard {
     });
   }
 
-  static bool ApplyVirtualTopology() {
+  static bool ApplyVirtualTopology(UINT32 preferred_width = 0,
+                                   UINT32 preferred_height = 0) {
     auto target = FindVirtualPath();
     if (!target) return false;
     target->flags |= DISPLAYCONFIG_PATH_ACTIVE;
@@ -428,27 +454,33 @@ class WindowsSingleDisplayGuard {
     mode.infoType = DISPLAYCONFIG_MODE_INFO_TYPE_SOURCE;
     mode.id = target->sourceInfo.id;
     mode.adapterId = target->sourceInfo.adapterId;
-    // 7:5 tablet presets matched to MttVDD modes: default 1650x1166 for
-    // 1:1 medium-quality 90 fps without CPU scaling; override via
-    // tablet-display.ini [tablet] width=1650 | 2400 | 3000.
-    wchar_t module[32768]{};
-    DWORD length = GetModuleFileNameW(nullptr, module, 32768);
-    auto config = std::filesystem::path(module).parent_path() / L"tablet-display.ini";
-    const UINT32 configured_width =
-        length ? GetPrivateProfileIntW(L"tablet", L"width", kCompactWidth, config.c_str())
-               : kCompactWidth;
-    if (configured_width == kWidth) {
-      mode.sourceMode.width = kWidth;
-      mode.sourceMode.height = kHeight;
-    } else if (configured_width == kHighWidth) {
-      mode.sourceMode.width = kHighWidth;
-      mode.sourceMode.height = kHighHeight;
-    } else if (configured_width == kBalancedWidth) {
-      mode.sourceMode.width = kBalancedWidth;
-      mode.sourceMode.height = kBalancedHeight;
+    // Prefer the controller's remembered/active resolution when supplied so
+    // MttVDD boots directly into it without a 1650->target double switch or
+    // fallback reset on restart; otherwise honor tablet-display.ini or 1650x1166.
+    if (preferred_width >= 640 && preferred_height >= 480 &&
+        preferred_width <= 32768 && preferred_height <= 32768) {
+      mode.sourceMode.width = preferred_width;
+      mode.sourceMode.height = preferred_height;
     } else {
-      mode.sourceMode.width = kCompactWidth;
-      mode.sourceMode.height = kCompactHeight;
+      wchar_t module[32768]{};
+      DWORD length = GetModuleFileNameW(nullptr, module, 32768);
+      auto config = std::filesystem::path(module).parent_path() / L"tablet-display.ini";
+      const UINT32 configured_width =
+          length ? GetPrivateProfileIntW(L"tablet", L"width", kCompactWidth, config.c_str())
+                 : kCompactWidth;
+      if (configured_width == kWidth) {
+        mode.sourceMode.width = kWidth;
+        mode.sourceMode.height = kHeight;
+      } else if (configured_width == kHighWidth) {
+        mode.sourceMode.width = kHighWidth;
+        mode.sourceMode.height = kHighHeight;
+      } else if (configured_width == kBalancedWidth) {
+        mode.sourceMode.width = kBalancedWidth;
+        mode.sourceMode.height = kBalancedHeight;
+      } else {
+        mode.sourceMode.width = kCompactWidth;
+        mode.sourceMode.height = kCompactHeight;
+      }
     }
     mode.sourceMode.pixelFormat = DISPLAYCONFIG_PIXELFORMAT_32BPP;
     Layout exclusive{{*target}, {mode}};
@@ -553,6 +585,7 @@ class WindowsSingleDisplayGuard {
   bool Fail(const char* message) {
     LOG_WARN("Tablet display: {}; video and input remain paused", message);
     capture_display_.clear();
+    missing_output_polls_ = 0;
     next_probe_ = GetTickCount64() + 2000;
     Restore();
     return false;
@@ -571,6 +604,9 @@ class WindowsSingleDisplayGuard {
   bool stopping_ = false;
   ULONGLONG next_probe_ = 0;
   ULONGLONG deadline_ = 0;
+  unsigned missing_output_polls_ = 0;
+  UINT32 preferred_width_ = 0;
+  UINT32 preferred_height_ = 0;
   std::string capture_display_;
 };
 

@@ -26,10 +26,6 @@
 #include "service_host.h"
 #endif
 
-#ifdef _WIN32
-#include "platform/windows/audio/virtual_mic_sink.h"
-#endif
-
 namespace crossdesk {
 namespace {
 
@@ -687,32 +683,7 @@ int SessionDeviceManager::InitializeAudioOutput() {
   return 0;
 }
 
-#ifdef _WIN32
-namespace {
-WindowsVirtualMicSink& VirtualMicSinkInstance() {
-  static WindowsVirtualMicSink sink;
-  return sink;
-}
-}  // namespace
-#endif
-
-void SessionDeviceManager::PushRemoteMicAudio(const char *data, size_t size) {
-#ifdef _WIN32
-  VirtualMicSinkInstance().Push(data, size);
-#else
-  (void)data;
-  (void)size;
-#endif
-}
-
-void SessionDeviceManager::StopRemoteMicAudio() {
-#ifdef _WIN32
-  VirtualMicSinkInstance().Stop();
-#endif
-}
-
 int SessionDeviceManager::DestroyAudioOutput() {
-  StopRemoteMicAudio();
   for (const auto& [_, stream] : output_streams_)
     SDL_DestroyAudioStream(stream);
   output_streams_.clear();

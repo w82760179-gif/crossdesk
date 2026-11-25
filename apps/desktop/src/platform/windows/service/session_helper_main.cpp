@@ -2224,7 +2224,7 @@ int main(int argc, char* argv[]) {
              shutdown_error);
   }
 
-  if (argc == 5 && std::strcmp(argv[1], "--tablet-display") == 0) {
+  if ((argc == 5 || argc == 7) && std::strcmp(argv[1], "--tablet-display") == 0) {
     HANDLE handles[3]{};
     for (int i = 0; i < 3; ++i) {
       uintptr_t value = 0;
@@ -2233,7 +2233,22 @@ int main(int argc, char* argv[]) {
       if (parsed.ec != std::errc{} || parsed.ptr != end || !value) return 1;
       handles[i] = reinterpret_cast<HANDLE>(value);
     }
-    return crossdesk::WindowsSingleDisplayGuard::RunDisplayHelper(handles[0], handles[1], handles[2]);
+    UINT32 preferred_width = 0;
+    UINT32 preferred_height = 0;
+    if (argc == 7) {
+      auto parse_u32 = [](const char* text, UINT32& out) {
+        const auto end = text + std::strlen(text);
+        const auto parsed = std::from_chars(text, end, out);
+        return parsed.ec == std::errc{} && parsed.ptr == end;
+      };
+      if (!parse_u32(argv[5], preferred_width) ||
+          !parse_u32(argv[6], preferred_height)) {
+        preferred_width = 0;
+        preferred_height = 0;
+      }
+    }
+    return crossdesk::WindowsSingleDisplayGuard::RunDisplayHelper(
+        handles[0], handles[1], handles[2], preferred_width, preferred_height);
   }
 
   bool run_helper = false;

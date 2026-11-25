@@ -59,7 +59,6 @@ final class NativeSession implements AutoCloseable {
     private volatile boolean closed;
     private Surface surface;
     private volatile AudioPlayer audio;
-    private volatile AudioRecorder mic;
     private final SessionDocuments documents;
     private boolean sendingFile;
     private final Runnable fileTick=new Runnable(){public void run(){
@@ -354,15 +353,6 @@ final class NativeSession implements AutoCloseable {
         if (type == 2 && player != null) player.setEnabled(value != 0);
         execute(() -> { if (connected){nControl(handle, type, value);if(type==4)networkStatistics.resetVideo();} });
     }
-    void setMicEnabled(boolean enabled, Runnable onFailure) {
-        AudioRecorder prev = mic;
-        mic = null;
-        if (prev != null) prev.close();
-        if (!enabled || closed || !connected) return;
-        mic = new AudioRecorder(
-            pcm -> { long h = handle; if (!closed && connected && h != 0) nSendAudio(h, pcm); },
-            () -> ui(() -> { AudioRecorder cur = mic; mic = null; if (cur != null) cur.close(); if (onFailure != null) onFailure.run(); }));
-    }
     void virtualDisplayScale(int percent, int requestId) {
         execute(() -> {
             if (connected) nVirtualScale(handle, percent, requestId);
@@ -411,7 +401,6 @@ final class NativeSession implements AutoCloseable {
         closed = true; main.removeCallbacks(timeout);main.removeCallbacks(statisticsTick);main.removeCallbacks(fileTick);
         RTC.execute(() -> {
             main.removeCallbacks(timeout);
-            if (mic != null) { mic.close(); mic = null; }
             if (audio != null) { audio.close(); audio = null; }
             password = "";
             if (handle != 0) { nDestroy(handle); handle = 0; }
@@ -432,7 +421,6 @@ final class NativeSession implements AutoCloseable {
     private static native void nKey(long handle, int code, boolean down);
     private static native void nText(long handle,byte[] text);
     private static native void nControl(long handle, int type, int value);
-    private static native void nSendAudio(long handle, byte[] pcm);
     private static native void nVirtualScale(long handle, int percent, int requestId);
     private static native boolean nDisplayResolution(long handle,int displayId,String displayKey,int width,int height,long requestId);
     private static native boolean nVideoSettings(long handle,int quality,int frameRate,int preference,long requestId);

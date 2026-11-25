@@ -23,7 +23,11 @@ namespace {
 std::mutex native_display_resolution_mutex;
 #ifdef _WIN32
 WindowsSingleDisplayGuard windows_single_display_guard;
-std::unordered_map<std::string, uint64_t> virtual_startup_retry_deadlines;
+struct VirtualStartupRetry {
+  uint64_t deadline = 0;
+  uint64_t next_attempt = 0;
+};
+std::unordered_map<std::string, VirtualStartupRetry> virtual_startup_retries;
 
 std::vector<DisplayInfo> EffectiveWindowsDisplayList(
     const std::vector<DisplayInfo> &list,
@@ -136,7 +140,14 @@ bool GuiRuntime::ApplyHostDisplayResolution(const DisplayResolutionChange &chang
     // windows_single_display_guard; never enqueue it into physical restoration.
     const auto effective = EffectiveWindowsDisplayList(
         displays, windows_single_display_guard.capture_display());
-    return ApplyWindowsDisplayResolution(effective, change);
+    const bool ok = ApplyWindowsDisplayResolution(effective, change);
+    if (ok) {
+      windows_single_display_guard.SetPreferredMode(
+          static_cast<UINT32>(change.resolution.width),
+          static_cast<UINT32>(change.resolution.height));
+      windows_single_display_guard.NoteModeTransition();
+    }
+    return ok;
   }
   return display_resolution_restoration_.Apply(change.display_key,
       [&] { return CaptureWindowsDisplayResolution(displays, change); },
@@ -193,6 +204,7 @@ void GuiRuntime::RestoreHostDisplayResolutions(bool force) {
 #ifdef _WIN32
   if (windows_single_display_guard.Tracked()) {
     if (windows_single_display_guard.Restore(force ? 5000 : 0)) {
+      windows_single_display_guard.ClearPreferredMode();
       devices_.SetWindowsSessionDisplay({});
       LOG_INFO("Restored original multi-display topology after remote control");
     } else if (disconnected || force) {
@@ -234,6 +246,9 @@ void GuiRuntime::HandleVirtualDisplayScale() {
       std::lock_guard lock(native_display_resolution_mutex);
       if (source->IsActive()) {
         auto result = windows_single_display_guard.DisplayScale(command.request.percent);
+        if (command.request.percent != 0 && result.accepted) {
+          windows_single_display_guard.NoteModeTransition();
+        }
         response.percent = result.percent;
         response.accepted = result.accepted;
         response.options = std::move(result.options);
@@ -272,7 +287,33 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
   devices_.RequireTabletDisplay(tablet);
   if (!stopping_ && tablet && !peers.empty()) {
     if (!IsCurrentSessionUserDesktopActive()) return false;
+    bool wait_for_preferences = false;
+    DisplayResolution preferred{};
+    {
+      std::lock_guard lock(display_resolution_commands_mutex_);
+      const auto now_tick = SDL_GetTicks();
+      for (const auto &peer_id : peers) {
+        const auto found = initial_display_resolutions_.find(peer_id);
+        if (found == initial_display_resolutions_.end()) continue;
+        const auto &st = found->second.state;
+        if (!st.received && st.connected && st.deadline > 1200 &&
+            now_tick < st.deadline - 1200) {
+          wait_for_preferences = true;
+        }
+        if (st.received && !st.preferences.empty()) {
+          preferred = st.preferences.back().resolution;
+        }
+      }
+    }
     std::lock_guard lock(native_display_resolution_mutex);
+    if (!windows_single_display_guard.Tracked()) {
+      if (wait_for_preferences) return false;
+      if (ValidDisplayResolution(preferred)) {
+        windows_single_display_guard.SetPreferredMode(
+            static_cast<UINT32>(preferred.width),
+            static_cast<UINT32>(preferred.height));
+      }
+    }
     if (!windows_single_display_guard.Update()) return false;
     if (devices_.SetWindowsSessionDisplay(windows_single_display_guard.capture_display())) {
       selected_display_ = 0;
@@ -324,17 +365,26 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
 #endif
 #ifdef _WIN32
     if (use_virtual_match && !startup.state.preferences.empty()) {
-      const auto probe = QueryHostDisplayResolutions();
-      if (probe.empty()) {
-        const auto now_tick = SDL_GetTicks();
-        auto &retry_until = virtual_startup_retry_deadlines[id];
-        if (retry_until == 0) retry_until = now_tick + 3000;
-        if (now_tick < retry_until) continue;
-        LOG_WARN("Remembered virtual display resolution wait timed out with no enumerable displays");
+      const auto now_tick = SDL_GetTicks();
+      auto it_retry = virtual_startup_retries.find(id);
+      if (it_retry != virtual_startup_retries.end() &&
+          now_tick < it_retry->second.next_attempt) {
+        continue;
       }
-      virtual_startup_retry_deadlines.erase(id);
+      const auto probe = QueryHostDisplayResolutions();
+      const bool modes_ready = !probe.empty() && !probe[0].modes.empty();
+      if (!modes_ready) {
+        auto &retry = virtual_startup_retries[id];
+        if (retry.deadline == 0) retry.deadline = now_tick + 3000;
+        if (now_tick < retry.deadline) {
+          retry.next_attempt = now_tick + 150;
+          continue;
+        }
+        LOG_WARN("Remembered virtual display resolution wait timed out with no enumerable display modes");
+      }
     }
 #endif
+    bool retry_virtual_startup = false;
     for (const auto &preference : startup.state.preferences) {
       RestoreHostDisplayResolutions();
       if (!active()) break;
@@ -359,6 +409,20 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
       const DisplayResolutionChange change{display->display_id,
           display->display_key, preference.resolution};
       if (!ApplyHostDisplayResolution(change)) {
+#ifdef _WIN32
+        if (use_virtual_match) {
+          const auto now_tick = SDL_GetTicks();
+          auto &retry = virtual_startup_retries[id];
+          if (retry.deadline == 0) retry.deadline = now_tick + 3000;
+          if (now_tick < retry.deadline) {
+            retry.next_attempt = now_tick + 200;
+            retry_virtual_startup = true;
+            LOG_INFO("Remembered virtual display resolution {}x{} apply deferred; retrying",
+                     preference.resolution.width, preference.resolution.height);
+            continue;
+          }
+        }
+#endif
         LOG_INFO("Remembered display resolution {}x{} is unavailable; keeping current mode",
                  preference.resolution.width, preference.resolution.height);
       } else {
@@ -369,6 +433,10 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
         next_display_resolution_poll_ = 0;
       }
     }
+    if (retry_virtual_startup) continue;
+#ifdef _WIN32
+    virtual_startup_retries.erase(id);
+#endif
     RestoreHostDisplayResolutions();
     {
       std::lock_guard lock(display_resolution_commands_mutex_);
