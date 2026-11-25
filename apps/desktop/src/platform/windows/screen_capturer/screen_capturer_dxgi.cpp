@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <string>
 #include <vector>
 
@@ -347,8 +348,114 @@ HRESULT ScreenCapturerDxgi::ReleaseAcquiredFrame() {
   return result;
 }
 
+class Nv12SlicePool {
+ public:
+  Nv12SlicePool() {
+    workers_.reserve(kWorkerCount);
+    for (int i = 0; i < kWorkerCount; ++i) {
+      workers_.emplace_back([this, slice = i + 1] { WorkerLoop(slice); });
+    }
+  }
+  ~Nv12SlicePool() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      stop_ = true;
+    }
+    cv_.notify_all();
+    for (auto& w : workers_) {
+      if (w.joinable()) w.join();
+    }
+  }
+
+  int Convert(const uint8_t* src, int src_stride, uint8_t* dst_y,
+              uint8_t* dst_uv, int width, int height) {
+    if (static_cast<int64_t>(width) * height < 1600 * 900 || height < 256) {
+      return libyuv::ARGBToNV12(src, src_stride, dst_y, width, dst_uv, width,
+                                width, height);
+    }
+    int y_edges[kTotalSlices + 1];
+    y_edges[0] = 0;
+    for (int i = 1; i < kTotalSlices; ++i) {
+      y_edges[i] = ((height * i) / kTotalSlices) & ~1;
+    }
+    y_edges[kTotalSlices] = height;
+
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      src_ = src;
+      src_stride_ = src_stride;
+      dst_y_ = dst_y;
+      dst_uv_ = dst_uv;
+      width_ = width;
+      for (int i = 0; i <= kTotalSlices; ++i) y_edges_[i] = y_edges[i];
+      failed_.store(false, std::memory_order_relaxed);
+      remaining_.store(kWorkerCount, std::memory_order_release);
+      ++generation_;
+    }
+    cv_.notify_all();
+
+    RunSlice(0);
+
+    std::unique_lock<std::mutex> done_lock(done_mutex_);
+    done_cv_.wait(done_lock, [this] {
+      return remaining_.load(std::memory_order_acquire) == 0;
+    });
+    return failed_.load(std::memory_order_relaxed) ? -1 : 0;
+  }
+
+ private:
+  static constexpr int kTotalSlices = 4;
+  static constexpr int kWorkerCount = kTotalSlices - 1;
+
+  void RunSlice(int slice) {
+    const int y0 = y_edges_[slice];
+    const int h = y_edges_[slice + 1] - y0;
+    if (h <= 0) return;
+    const int rc = libyuv::ARGBToNV12(
+        src_ + static_cast<size_t>(y0) * src_stride_, src_stride_,
+        dst_y_ + static_cast<size_t>(y0) * width_, width_,
+        dst_uv_ + static_cast<size_t>(y0 / 2) * width_, width_, width_, h);
+    if (rc != 0) failed_.store(true, std::memory_order_relaxed);
+  }
+
+  void WorkerLoop(int slice) {
+    uint64_t seen = 0;
+    for (;;) {
+      std::unique_lock<std::mutex> lock(mutex_);
+      cv_.wait(lock, [this, seen] { return stop_ || generation_ != seen; });
+      if (stop_) return;
+      seen = generation_;
+      lock.unlock();
+
+      RunSlice(slice);
+
+      if (remaining_.fetch_sub(1, std::memory_order_acq_rel) == 1) {
+        std::lock_guard<std::mutex> done_lock(done_mutex_);
+        done_cv_.notify_one();
+      }
+    }
+  }
+
+  std::vector<std::thread> workers_;
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  std::mutex done_mutex_;
+  std::condition_variable done_cv_;
+  bool stop_ = false;
+  uint64_t generation_ = 0;
+  std::atomic<int> remaining_{0};
+  std::atomic<bool> failed_{false};
+  const uint8_t* src_ = nullptr;
+  int src_stride_ = 0;
+  uint8_t* dst_y_ = nullptr;
+  uint8_t* dst_uv_ = nullptr;
+  int width_ = 0;
+  int y_edges_[kTotalSlices + 1] = {};
+};
+
 bool ScreenCapturerDxgi::ConvertFrame(int frame_monitor, bool* cursor_embedded,
-                                      CursorFrameCompositor& compositor) {
+                                      CursorFrameCompositor& compositor,
+                                      Nv12SlicePool& nv12_pool) {
   *cursor_embedded = false;
   if (!staging_) return false;
   D3D11_TEXTURE2D_DESC src_desc{};
@@ -436,10 +543,9 @@ bool ScreenCapturerDxgi::ConvertFrame(int frame_monitor, bool* cursor_embedded,
     nv12_height_ = even_height;
   }
 
-  const int converted =
-      libyuv::ARGBToNV12(pixels, stride, nv12_frame_, even_width,
-                         nv12_frame_ + even_width * even_height, even_width,
-                         even_width, even_height);
+  const int converted = nv12_pool.Convert(
+      pixels, stride, nv12_frame_, nv12_frame_ + even_width * even_height,
+      even_width, even_height);
 
   d3d_context_->Unmap(staging_.Get(), 0);
   return converted == 0;
@@ -449,6 +555,7 @@ void ScreenCapturerDxgi::CaptureLoop() {
   ScopedTimerResolution timer_resolution(1);
   ScopedWindowsPhysicalCoordinates physical_coordinates;
   CursorFrameCompositor cursor_compositor;
+  Nv12SlicePool nv12_pool;
   const int timeout_ms = (std::max)(1, 1000 / (std::max)(1, fps_));
   const auto frame_interval =
       std::chrono::nanoseconds(std::chrono::seconds(1)) / (std::max)(1, fps_);
@@ -623,7 +730,7 @@ void ScreenCapturerDxgi::CaptureLoop() {
 
     bool cursor_embedded = false;
     const bool converted =
-        ConvertFrame(frame_monitor, &cursor_embedded, cursor_compositor);
+        ConvertFrame(frame_monitor, &cursor_embedded, cursor_compositor, nv12_pool);
 
     const std::string stream_id = MakeDisplayStreamId(frame_monitor);
     cached_generation = duplication_generation_;

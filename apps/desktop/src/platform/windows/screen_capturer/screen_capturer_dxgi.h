@@ -27,6 +27,7 @@
 namespace crossdesk {
 
 class CursorFrameCompositor;
+class Nv12SlicePool;
 
 class ScreenCapturerDxgi : public ScreenCapturer {
  public:
@@ -64,7 +65,8 @@ class ScreenCapturerDxgi : public ScreenCapturer {
   bool CreateDuplicationForMonitor(int monitor_index);
   void CaptureLoop();
   bool ConvertFrame(int frame_monitor, bool* cursor_embedded,
-                    CursorFrameCompositor& compositor);
+                    CursorFrameCompositor& compositor,
+                    Nv12SlicePool& nv12_pool);
   void ReleaseDuplication();
   HRESULT ReleaseAcquiredFrame();
 
