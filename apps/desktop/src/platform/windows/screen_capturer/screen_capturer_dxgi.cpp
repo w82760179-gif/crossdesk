@@ -622,7 +622,7 @@ void ScreenCapturerDxgi::CaptureLoop() {
       // Recompose from the clean staging texture while showing a cursor, or
       // once after disabling it. Never replay a baked-in stale cursor.
       if ((show_cursor_.load(std::memory_order_relaxed) || cached_cursor_embedded) &&
-          !ConvertFrame(cached_monitor, &cached_cursor_embedded, cursor_compositor)) {
+          !ConvertFrame(cached_monitor, &cached_cursor_embedded, cursor_compositor, nv12_pool)) {
         cached_frame_valid = false;
         return;
       }
