@@ -455,8 +455,8 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
             if(host.bitmap!=null){
                 float scale=viewport.width()/host.desktopWidth;
                 float density=getResources().getDisplayMetrics().density;
-                float minBoxPx=32f*density;
-                float maxBoxPx=42f*density;
+                float minBoxPx=27f*density;
+                float maxBoxPx=38f*density;
                 float bitmapMax=Math.max(host.bitmap.getWidth(),host.bitmap.getHeight());
                 if(bitmapMax>0f){
                     float drawn=bitmapMax*scale;
@@ -469,7 +469,7 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
                     host.bitmap.getWidth()-host.hotX,host.bitmap.getHeight()-host.hotY),paint);
                 canvas.restoreToCount(saved); return;
             }
-            float density=getResources().getDisplayMetrics().density;canvas.scale(density*1.2f,density*1.2f);
+            float density=getResources().getDisplayMetrics().density;canvas.scale(density*1.08f,density*1.08f);
             if(host.shape==7){
                 paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.6f);paint.setColor(Color.BLACK);
                 canvas.drawLine(0,-8,0,8,paint);canvas.drawLine(-3,-8,3,-8,paint);canvas.drawLine(-3,8,3,8,paint);

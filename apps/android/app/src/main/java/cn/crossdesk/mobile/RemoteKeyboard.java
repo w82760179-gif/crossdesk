@@ -179,7 +179,7 @@ final class RemoteKeyboard extends LinearLayout {
     }
     private void normalIme(boolean show){
         InputMethodManager manager=getContext().getSystemService(InputMethodManager.class);
-        if(show){if(computer)editor.requestFocus();else editor.start();manager.showSoftInput(editor,InputMethodManager.SHOW_IMPLICIT);}
+        if(show){if(computer)editor.requestFocus();else editor.start();if(!manager.showSoftInput(editor,0)&&Build.VERSION.SDK_INT>=30&&getWindowInsetsController()!=null)getWindowInsetsController().show(WindowInsets.Type.ime());}
         else manager.hideSoftInputFromWindow(editor.getWindowToken(),0);
     }
     private void render(){

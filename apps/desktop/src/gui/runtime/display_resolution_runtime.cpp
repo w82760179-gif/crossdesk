@@ -2,6 +2,8 @@
 
 #include <SDL3/SDL_timer.h>
 
+#include <unordered_map>
+
 #include "rd_log.h"
 
 #ifdef _WIN32
@@ -21,6 +23,7 @@ namespace {
 std::mutex native_display_resolution_mutex;
 #ifdef _WIN32
 WindowsSingleDisplayGuard windows_single_display_guard;
+std::unordered_map<std::string, uint64_t> virtual_startup_retry_deadlines;
 
 std::vector<DisplayInfo> EffectiveWindowsDisplayList(
     const std::vector<DisplayInfo> &list,
@@ -97,6 +100,10 @@ void GuiRuntime::ReceiveDisplayResolutionStartup(
   auto &initial = initial_display_resolutions_[id];
   if (initial.source.lock() != events) initial = {};
   initial.source = events;
+  if (!preferences.empty()) {
+    LOG_INFO("Received {} remembered display resolution preference(s) from {}",
+             preferences.size(), id);
+  }
   initial.state.Receive(std::move(preferences));
 }
 
@@ -315,6 +322,19 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
       use_virtual_match = !windows_single_display_guard.capture_display().empty();
     }
 #endif
+#ifdef _WIN32
+    if (use_virtual_match && !startup.state.preferences.empty()) {
+      const auto probe = QueryHostDisplayResolutions();
+      if (probe.empty()) {
+        const auto now_tick = SDL_GetTicks();
+        auto &retry_until = virtual_startup_retry_deadlines[id];
+        if (retry_until == 0) retry_until = now_tick + 3000;
+        if (now_tick < retry_until) continue;
+        LOG_WARN("Remembered virtual display resolution wait timed out with no enumerable displays");
+      }
+      virtual_startup_retry_deadlines.erase(id);
+    }
+#endif
     for (const auto &preference : startup.state.preferences) {
       RestoreHostDisplayResolutions();
       if (!active()) break;
@@ -329,14 +349,22 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
 #endif
             return false;
           });
-      if (display == available.end()) continue;
+      if (display == available.end()) {
+        LOG_INFO("Remembered display '{}' not matched among {} display(s)",
+                 preference.display_key, available.size());
+        continue;
+      }
       // Resolve a fresh slot from the native identity: hotplug can reorder the
       // list, and another display must never inherit the remembered mode.
       const DisplayResolutionChange change{display->display_id,
           display->display_key, preference.resolution};
       if (!ApplyHostDisplayResolution(change)) {
-        LOG_INFO("Remembered display resolution is unavailable; keeping current mode");
+        LOG_INFO("Remembered display resolution {}x{} is unavailable; keeping current mode",
+                 preference.resolution.width, preference.resolution.height);
       } else {
+        LOG_INFO("Applied remembered display resolution {}x{} on {}",
+                 preference.resolution.width, preference.resolution.height,
+                 display->display_key);
         last_display_resolutions_.clear();
         next_display_resolution_poll_ = 0;
       }

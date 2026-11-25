@@ -23,14 +23,18 @@ final class RemoteVideoSettings {
     Values selection,applied;
     long requestId,appliedRequestId;
     RemoteVideoSettings(int preference){this(preference,1920);}
-    RemoteVideoSettings(int preference,int displayLongEdge){
+    RemoteVideoSettings(int preference,int displayLongEdge){this(preference,displayLongEdge,-1,-1);}
+    RemoteVideoSettings(int preference,int displayLongEdge,int savedQuality,int savedFrameRate){
         // Start within common mobile decoder limits. Hardware availability and
         // maximum resolution vary, and AV1 may still need software fallback.
         // Small screens need no more than 720p; larger screens start at 1080p.
         // All quality/frame-rate choices remain available for manual adjustment.
         int policy = preference >= 0 && preference <= 2 ? preference : DEFAULT_PREFERENCE;
-        int rate = displayLongEdge>0&&displayLongEdge<=1280?60:90;
-        selection=applied=new Values(displayLongEdge>0&&displayLongEdge<=1280?0:1,rate,policy);
+        int defaultQuality = displayLongEdge>0&&displayLongEdge<=1280?0:1;
+        int defaultRate = displayLongEdge>0&&displayLongEdge<=1280?60:90;
+        int quality = savedQuality>=0&&savedQuality<=2?savedQuality:defaultQuality;
+        int rate = (savedFrameRate==30||savedFrameRate==60||savedFrameRate==90)?savedFrameRate:defaultRate;
+        selection=applied=new Values(quality,rate,policy);
     }
     void setSupported(boolean value){supported=value;if(!value){selection=applied;pending=false;failed=false;}}
     long begin(Values value){

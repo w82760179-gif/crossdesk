@@ -521,7 +521,7 @@ bool RemoteAction::FromJson(const std::string& json_string,
         for (const auto* field : {"quality", "frame_rate", "preference"}) {
           if (!settings.at(field).is_number_integer()) return false;
           const auto value = settings.at(field).get<int64_t>();
-          if (value < 0 || value > 60) return false;
+          if (value < 0 || value > 90) return false;
         }
         output.vs = {settings.at("quality").get<int>(),
                      settings.at("frame_rate").get<int>(),

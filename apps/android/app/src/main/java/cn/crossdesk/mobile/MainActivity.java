@@ -806,7 +806,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         cancelDisplayResolutionTimeout();displayResolutions=new RemoteDisplayResolutions();
         cancelVideoSettingsTimeout();
         android.util.DisplayMetrics metrics=getResources().getDisplayMetrics();
-        videoSettings=new RemoteVideoSettings(preferences.getInt("videoPreference",RemoteVideoSettings.DEFAULT_PREFERENCE),Math.max(metrics.widthPixels,metrics.heightPixels));
+        videoSettings=new RemoteVideoSettings(preferences.getInt("videoPreference",RemoteVideoSettings.DEFAULT_PREFERENCE),Math.max(metrics.widthPixels,metrics.heightPixels),preferences.getInt("videoQuality",-1),preferences.getInt("videoFrameRate",-1));
     }
     private void updateVideoSettings(RemoteVideoSettings.Values value){
         if(!ready||session==null||!preferences.getBoolean("networkConsent",false))return;
@@ -864,7 +864,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             return;
         }
         if(message.optInt("type",-1)==5){JSONObject service=message.optJSONObject("service_status");remoteServiceAvailable=service!=null&&service.optBoolean("available",false);return;}
-        if(message.optInt("type",-1)==12){if(!ready)return;videoSettings.receive(message);if(!videoSettings.pending)cancelVideoSettingsTimeout();if(video!=null)video.targetFrameRate(videoSettings.applied.frameRate);if(controls!=null)controls.videoSettings(videoSettings);return;}
+        if(message.optInt("type",-1)==12){if(!ready)return;videoSettings.receive(message);if(!videoSettings.pending){cancelVideoSettingsTimeout();if(!videoSettings.failed)preferences.edit().putInt("videoQuality",videoSettings.applied.quality).putInt("videoFrameRate",videoSettings.applied.frameRate).putInt("videoPreference",videoSettings.applied.preference).apply();}if(video!=null)video.targetFrameRate(videoSettings.applied.frameRate);if(controls!=null)controls.videoSettings(videoSettings);return;}
         JSONObject info=message.optJSONObject("host_info");
         if(info!=null){
             hostPlatform=info.optString("platform","");JSONArray list=info.optJSONArray("displays");if(list!=null)displays=list;history.metadata(serverKey(),connectedRemote,info.optString("host_name",connectedRemote),hostPlatform);

@@ -24,6 +24,15 @@ final class RemoteResolutionStore {
     private static boolean validKey(String key) {
         return !key.isEmpty()&&key.getBytes(StandardCharsets.UTF_8).length<=1024&&key.indexOf('\0')<0;
     }
+    private static String displaySuffix(String key) {
+        int sep=key.indexOf('|');
+        return sep>=0&&sep+1<key.length()?key.substring(sep):"";
+    }
+    private static boolean sameDisplay(String a,String b) {
+        if(a.equals(b))return true;
+        String suffix=displaySuffix(a);
+        return !suffix.isEmpty()&&suffix.equals(displaySuffix(b));
+    }
     private static int dimension(JSONObject value,String key)throws Exception {
         Object raw=value.get(key);
         if(!(raw instanceof Integer)&&!(raw instanceof Long))throw new IllegalArgumentException();
@@ -44,7 +53,15 @@ final class RemoteResolutionStore {
                 JSONObject value=values.getJSONObject(i);
                 Object identity=value.get("display_key");
                 if(!(identity instanceof String)||!validKey((String)identity)||!keys.add((String)identity))return new JSONArray();
-                result.put(new JSONObject().put("display_key",identity).put("width",dimension(value,"width")).put("height",dimension(value,"height")));
+                String keyStr=(String)identity;
+                JSONObject entry=new JSONObject().put("display_key",keyStr).put("width",dimension(value,"width")).put("height",dimension(value,"height"));
+                JSONArray deduped=new JSONArray();
+                for(int j=0;j<result.length();j++) {
+                    JSONObject prev=result.getJSONObject(j);
+                    if(!sameDisplay(keyStr,prev.getString("display_key")))deduped.put(prev);
+                }
+                deduped.put(entry);
+                result=deduped;
             }
             return result;
         } catch(Exception ignored) { return new JSONArray(); }
@@ -55,7 +72,7 @@ final class RemoteResolutionStore {
             JSONArray saved=load(host,port,remote),updated=new JSONArray();
             for(int i=0;i<saved.length();i++) {
                 JSONObject value=saved.getJSONObject(i);
-                if(!displayKey.equals(value.getString("display_key")))updated.put(value);
+                if(!sameDisplay(displayKey,value.getString("display_key")))updated.put(value);
             }
             if(updated.length()>=32)updated.remove(0);
             updated.put(new JSONObject().put("display_key",displayKey).put("width",mode.width).put("height",mode.height));

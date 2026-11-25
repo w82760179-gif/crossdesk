@@ -85,7 +85,7 @@ struct PreviewSubscription {
         return {};
       for (const char *key : {"fps", "quality", "frame_rate", "preference"}) {
         const auto value = json.at(key).get<int64_t>();
-        if (value < 0 || value > 60)
+        if (value < 0 || value > 90)
           return {};
       }
       PreviewSubscription result{static_cast<uint32_t>(id), json.at("fps"),
