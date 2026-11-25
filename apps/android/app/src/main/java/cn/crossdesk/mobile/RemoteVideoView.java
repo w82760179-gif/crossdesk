@@ -455,16 +455,21 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
             if(host.bitmap!=null){
                 float scale=viewport.width()/host.desktopWidth;
                 float density=getResources().getDisplayMetrics().density;
-                float maxBoxPx=34f*density;
+                float minBoxPx=32f*density;
+                float maxBoxPx=42f*density;
                 float bitmapMax=Math.max(host.bitmap.getWidth(),host.bitmap.getHeight());
-                if(bitmapMax>0f && bitmapMax*scale>maxBoxPx) scale=maxBoxPx/bitmapMax;
+                if(bitmapMax>0f){
+                    float drawn=bitmapMax*scale;
+                    if(drawn<minBoxPx) scale=minBoxPx/bitmapMax;
+                    else if(drawn>maxBoxPx) scale=maxBoxPx/bitmapMax;
+                }
                 canvas.scale(scale,scale);
                 paint.setColor(Color.WHITE);paint.setStyle(Paint.Style.FILL);paint.setFilterBitmap(true);
                 canvas.drawBitmap(host.bitmap,null,new android.graphics.Rect(-host.hotX,-host.hotY,
                     host.bitmap.getWidth()-host.hotX,host.bitmap.getHeight()-host.hotY),paint);
                 canvas.restoreToCount(saved); return;
             }
-            float density=getResources().getDisplayMetrics().density;canvas.scale(density,density);
+            float density=getResources().getDisplayMetrics().density;canvas.scale(density*1.2f,density*1.2f);
             if(host.shape==7){
                 paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.6f);paint.setColor(Color.BLACK);
                 canvas.drawLine(0,-8,0,8,paint);canvas.drawLine(-3,-8,3,-8,paint);canvas.drawLine(-3,8,3,8,paint);
