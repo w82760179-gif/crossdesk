@@ -211,6 +211,8 @@ class WindowsSingleDisplayGuard {
   static constexpr UINT32 kHeight = 2120;
   static constexpr UINT32 kHighWidth = 2400;
   static constexpr UINT32 kHighHeight = 1696;
+  static constexpr UINT32 kBalancedWidth = 2016;
+  static constexpr UINT32 kBalancedHeight = 1424;
   static constexpr UINT32 kCompactWidth = 1650;
   static constexpr UINT32 kCompactHeight = 1166;
   static constexpr int kScales[] = {100, 125, 150, 175, 200, 225,
@@ -441,6 +443,9 @@ class WindowsSingleDisplayGuard {
     } else if (configured_width == kHighWidth) {
       mode.sourceMode.width = kHighWidth;
       mode.sourceMode.height = kHighHeight;
+    } else if (configured_width == kBalancedWidth) {
+      mode.sourceMode.width = kBalancedWidth;
+      mode.sourceMode.height = kBalancedHeight;
     } else {
       mode.sourceMode.width = kCompactWidth;
       mode.sourceMode.height = kCompactHeight;

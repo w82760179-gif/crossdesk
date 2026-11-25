@@ -21,13 +21,36 @@ namespace {
 std::mutex native_display_resolution_mutex;
 #ifdef _WIN32
 WindowsSingleDisplayGuard windows_single_display_guard;
+
+std::vector<DisplayInfo> EffectiveWindowsDisplayList(
+    const std::vector<DisplayInfo> &list,
+    const std::string &capture_display) {
+  if (!capture_display.empty() &&
+      (list.empty() || list[0].name != capture_display)) {
+    return {DisplayInfo(nullptr, capture_display, true, 0, 0, 1, 1)};
+  }
+  return list;
+}
+
+bool MatchesVirtualDisplayKey(const std::string &candidate,
+                              const std::string &remembered) {
+  if (candidate == remembered) return true;
+  const auto sep = remembered.find('|');
+  if (sep == std::string::npos || sep + 1 >= remembered.size()) return false;
+  const auto suffix = remembered.substr(sep);
+  return candidate.size() >= suffix.size() &&
+         candidate.compare(candidate.size() - suffix.size(), suffix.size(),
+                           suffix) == 0;
+}
 #endif
 } // namespace
 
 std::vector<DisplayResolutionInfo> GuiRuntime::QueryHostDisplayResolutions() {
 #ifdef _WIN32
   std::lock_guard lock(native_display_resolution_mutex);
-  return QueryWindowsDisplayResolutions(devices_.display_info_list());
+  return QueryWindowsDisplayResolutions(EffectiveWindowsDisplayList(
+      devices_.display_info_list(),
+      windows_single_display_guard.capture_display()));
 #elif defined(__APPLE__)
   std::lock_guard lock(native_display_resolution_mutex);
   return QueryMacDisplayResolutions(devices_.display_info_list());
@@ -104,7 +127,9 @@ bool GuiRuntime::ApplyHostDisplayResolution(const DisplayResolutionChange &chang
   if (!windows_single_display_guard.capture_display().empty()) {
     // Virtual display topology is restored wholesale on disconnect by
     // windows_single_display_guard; never enqueue it into physical restoration.
-    return ApplyWindowsDisplayResolution(displays, change);
+    const auto effective = EffectiveWindowsDisplayList(
+        displays, windows_single_display_guard.capture_display());
+    return ApplyWindowsDisplayResolution(effective, change);
   }
   return display_resolution_restoration_.Apply(change.display_key,
       [&] { return CaptureWindowsDisplayResolution(displays, change); },
@@ -281,12 +306,13 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
     // Connected and metadata callbacks can interleave with this tick. Keep
     // early preferences pending until admission has actually been committed.
     if (!active()) continue;
+    bool use_virtual_match = false;
 #ifdef _WIN32
-    if (!windows_single_display_guard.capture_display().empty()) {
-      const auto active_list = devices_.display_info_list();
-      const bool ready = !active_list.empty() &&
-          active_list[0].name == windows_single_display_guard.capture_display();
-      if (!ready) continue;
+    {
+      std::lock_guard lock(native_display_resolution_mutex);
+      if (tablet && windows_single_display_guard.capture_display().empty())
+        continue;
+      use_virtual_match = !windows_single_display_guard.capture_display().empty();
     }
 #endif
     for (const auto &preference : startup.state.preferences) {
@@ -294,14 +320,26 @@ bool GuiRuntime::HandleDisplayResolutionChanges() {
       if (!active()) break;
       const auto available = QueryHostDisplayResolutions();
       const auto display = std::find_if(available.begin(), available.end(),
-          [&](const auto &info) { return info.display_key == preference.display_key; });
+          [&](const auto &info) {
+            if (info.display_key == preference.display_key) return true;
+#ifdef _WIN32
+            if (use_virtual_match &&
+                MatchesVirtualDisplayKey(info.display_key, preference.display_key))
+              return true;
+#endif
+            return false;
+          });
       if (display == available.end()) continue;
       // Resolve a fresh slot from the native identity: hotplug can reorder the
       // list, and another display must never inherit the remembered mode.
       const DisplayResolutionChange change{display->display_id,
           display->display_key, preference.resolution};
-      if (!ApplyHostDisplayResolution(change))
+      if (!ApplyHostDisplayResolution(change)) {
         LOG_INFO("Remembered display resolution is unavailable; keeping current mode");
+      } else {
+        last_display_resolutions_.clear();
+        next_display_resolution_poll_ = 0;
+      }
     }
     RestoreHostDisplayResolutions();
     {

@@ -285,6 +285,12 @@ final class NativeSession implements AutoCloseable {
     void rememberDisplayResolution(String displayKey,RemoteDisplayResolutions.Mode mode){
         if(!closed&&connected)resolutionStore.remember(host,port,remote,displayKey,mode);
     }
+    int rememberedVirtualScale(int width,int height){
+        return resolutionStore.loadScale(host,port,remote,width,height);
+    }
+    void rememberVirtualScale(int width,int height,int percent){
+        if(!closed&&connected)resolutionStore.rememberScale(host,port,remote,width,height,percent);
+    }
     void announcementRequest(JSONObject request,String requestId){
         byte[] bytes=request.toString().getBytes(StandardCharsets.UTF_8);
         execute(()->{if(!signalReady||identity.isEmpty()||!nAnnouncementRequest(handle,bytes))ui(()->listener.announcementFailed(requestId));});

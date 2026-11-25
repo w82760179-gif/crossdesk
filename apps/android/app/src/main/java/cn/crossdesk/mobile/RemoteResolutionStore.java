@@ -18,6 +18,9 @@ final class RemoteResolutionStore {
     private String key(String host,int port,String remote) {
         return new JSONArray().put(host.trim().toLowerCase(Locale.ROOT)).put(port).put(remote).toString();
     }
+    private String scaleKey(String host,int port,String remote,int width,int height) {
+        return new JSONArray().put("scale").put(host.trim().toLowerCase(Locale.ROOT)).put(port).put(remote).put(width).put(height).toString();
+    }
     private static boolean validKey(String key) {
         return !key.isEmpty()&&key.getBytes(StandardCharsets.UTF_8).length<=1024&&key.indexOf('\0')<0;
     }
@@ -58,5 +61,14 @@ final class RemoteResolutionStore {
             updated.put(new JSONObject().put("display_key",displayKey).put("width",mode.width).put("height",mode.height));
             preferences.edit().putString(key(host,port,remote),updated.toString()).apply();
         } catch(Exception error) { Log.w("CrossDesk","Could not save remote display resolution",error); }
+    }
+    synchronized int loadScale(String host,int port,String remote,int width,int height) {
+        if(remote.isEmpty()||width<1||width>32768||height<1||height>32768)return 0;
+        int value=preferences.getInt(scaleKey(host,port,remote,width,height),0);
+        return value>=100&&value<=500?value:0;
+    }
+    synchronized void rememberScale(String host,int port,String remote,int width,int height,int percent) {
+        if(remote.isEmpty()||width<1||width>32768||height<1||height>32768||percent<100||percent>500)return;
+        preferences.edit().putInt(scaleKey(host,port,remote,width,height),percent).apply();
     }
 }

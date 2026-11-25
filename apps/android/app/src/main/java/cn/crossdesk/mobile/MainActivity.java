@@ -97,7 +97,12 @@ public final class MainActivity extends Activity implements NativeSession.Listen
     private static final java.util.concurrent.atomic.AtomicInteger virtualScaleSequence =
         new java.util.concurrent.atomic.AtomicInteger();
     private int virtualScalePending;
+    private int virtualScalePendingTarget;
+    private boolean virtualScaleAutoApplying;
+    private String lastAutoScaledMode = "";
+    private int virtualScaleAutoRetries;
     private Runnable virtualScaleTimeout;
+    private Runnable virtualScaleAutoRetry;
     private Runnable displayResolutionTimeout;
     private final Set<Integer> pressed=new HashSet<>();
     private Runnable backAction;
@@ -701,6 +706,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         try{history.save(serverKey(),connectedRemote,connectedRemote,hostPlatform,rememberPassword,pendingPassword);}catch(Exception error){toast(L10n.tr("密码保存失败，本次连接仍可使用"));}pendingPassword="";sessionScreen(preferences.getBoolean("autoLandscape",false));
         if(!canUsePictureInPicture())prepareBackgroundSession(true);
         if(videoSettings.supported&&videoSettings.requestId==0)updateVideoSettings(videoSettings.selection);
+        maybeAutoApplyVirtualScale();
         if(foreground&&preferences.getBoolean("networkConsent",false))remoteVersionCheck.connected();
     }
     @Override public void ended(String reason){
@@ -726,26 +732,55 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         remoteVersionCheck.reset();
         if(remoteUpdateDialog!=null){remoteUpdateDialog.dismiss();remoteUpdateDialog=null;}
     }
+    private void cancelVirtualScaleAutoRetry() {
+        if (virtualScaleAutoRetry != null) mainHandler.removeCallbacks(virtualScaleAutoRetry);
+        virtualScaleAutoRetry = null;
+    }
+
     private void finishVirtualScaleRequest() {
         if (virtualScaleTimeout != null) mainHandler.removeCallbacks(virtualScaleTimeout);
         virtualScaleTimeout = null;
         virtualScalePending = 0;
+        virtualScalePendingTarget = 0;
+        virtualScaleAutoApplying = false;
         if (controls != null) controls.setVirtualScalePending(false);
     }
 
     private void requestVirtualDisplayScale(int percent) {
+        requestVirtualDisplayScale(percent, false);
+    }
+
+    private void requestVirtualDisplayScale(int percent, boolean auto) {
         if (!ready || session == null || !displayScalingAvailable || virtualScalePending != 0) return;
+        cancelVirtualScaleAutoRetry();
         int request = virtualScaleSequence.updateAndGet(value -> value == Integer.MAX_VALUE ? 1 : value + 1);
         virtualScalePending = request;
+        virtualScalePendingTarget = percent;
+        virtualScaleAutoApplying = auto;
         if (controls != null) controls.setVirtualScalePending(true);
         virtualScaleTimeout = () -> {
             if (virtualScalePending != request) return;
+            boolean wasAuto = virtualScaleAutoApplying;
             finishVirtualScaleRequest();
             if (controls != null) controls.updateVirtualScale(0, null);
-            toast("未收到虚拟屏缩放状态，请重试");
+            if (!wasAuto) toast("未收到虚拟屏缩放状态，请重试");
         };
-        mainHandler.postDelayed(virtualScaleTimeout,5000);
+        mainHandler.postDelayed(virtualScaleTimeout, 5000);
         session.virtualDisplayScale(percent, request);
+    }
+
+    private void maybeAutoApplyVirtualScale() {
+        if (!ready || session == null || !displayScalingAvailable ||
+            virtualScalePending != 0 || displayResolutions.pending) return;
+        RemoteDisplayResolutions.Display display = displayResolutions.display(selectedDisplay);
+        if (display == null || display.current == null) return;
+        String modeKey = display.current.width + "x" + display.current.height;
+        if (modeKey.equals(lastAutoScaledMode)) return;
+        int saved = session.rememberedVirtualScale(display.current.width, display.current.height);
+        lastAutoScaledMode = modeKey;
+        if (saved >= 100 && saved <= 500) {
+            requestVirtualDisplayScale(saved, true);
+        }
     }
 
     private void cancelDisplayResolutionTimeout(){if(displayResolutionTimeout!=null)mainHandler.removeCallbacks(displayResolutionTimeout);displayResolutionTimeout=null;}
@@ -767,6 +802,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         if(controls!=null)controls.displayResolutions(displayResolutions,selectedDisplay);
     }
     private void resetVideoSettings(){
+        cancelVirtualScaleAutoRetry();lastAutoScaledMode="";virtualScaleAutoRetries=0;
         cancelDisplayResolutionTimeout();displayResolutions=new RemoteDisplayResolutions();
         cancelVideoSettingsTimeout();
         android.util.DisplayMetrics metrics=getResources().getDisplayMetrics();
@@ -789,16 +825,42 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             if(confirmed!=null&&session!=null)session.rememberDisplayResolution(confirmed.displayKey,confirmed.mode);
             if(!displayResolutions.pending)cancelDisplayResolutionTimeout();
             if(controls!=null)controls.displayResolutions(displayResolutions,selectedDisplay);
-            if(message.optInt("type",-1)==16)return;
+            if(message.optInt("type",-1)==16){
+                if(confirmed!=null)maybeAutoApplyVirtualScale();
+                return;
+            }
         }
         if(message.optInt("type",-1)==20){
             JSONObject status = message.optJSONObject("virtual_scale");
             if (status == null || virtualScalePending == 0 ||
                 status.optInt("request_id") != virtualScalePending) return;
+            boolean wasAuto = virtualScaleAutoApplying;
+            int requestedTarget = virtualScalePendingTarget;
             finishVirtualScaleRequest();
+            int actualPercent = status.optInt("percent");
+            boolean accepted = status.optBoolean("accepted", false);
             if (controls != null)
-                controls.updateVirtualScale(status.optInt("percent"), status.optJSONArray("options"));
-            if (!status.optBoolean("accepted", false)) toast("虚拟屏缩放未生效，请重试");
+                controls.updateVirtualScale(actualPercent, status.optJSONArray("options"));
+            if (accepted) {
+                virtualScaleAutoRetries = 0;
+                if (!wasAuto && requestedTarget > 0 && session != null) {
+                    RemoteDisplayResolutions.Display display = displayResolutions.display(selectedDisplay);
+                    if (display != null && display.current != null) {
+                        session.rememberVirtualScale(display.current.width, display.current.height, actualPercent);
+                        lastAutoScaledMode = display.current.width + "x" + display.current.height;
+                    }
+                }
+            } else if (wasAuto) {
+                if (actualPercent == 0 && virtualScaleAutoRetries < 3) {
+                    virtualScaleAutoRetries++;
+                    lastAutoScaledMode = "";
+                    cancelVirtualScaleAutoRetry();
+                    virtualScaleAutoRetry = this::maybeAutoApplyVirtualScale;
+                    mainHandler.postDelayed(virtualScaleAutoRetry, 800);
+                }
+            } else {
+                toast("虚拟屏缩放未生效，请重试");
+            }
             return;
         }
         if(message.optInt("type",-1)==5){JSONObject service=message.optJSONObject("service_status");remoteServiceAvailable=service!=null&&service.optBoolean("available",false);return;}
@@ -808,6 +870,7 @@ public final class MainActivity extends Activity implements NativeSession.Listen
             hostPlatform=info.optString("platform","");JSONArray list=info.optJSONArray("displays");if(list!=null)displays=list;history.metadata(serverKey(),connectedRemote,info.optString("host_name",connectedRemote),hostPlatform);
             displayScalingAvailable=info.optBoolean("supports_virtual_display_scale",false);
             if(controls!=null){controls.setHostPlatform(hostPlatform);controls.setDisplayScalingAvailable(displayScalingAvailable);}
+            maybeAutoApplyVirtualScale();
             boolean wasSupported=videoSettings.supported;videoSettings.setSupported(info.optBoolean("supports_video_settings",false));
             if(!videoSettings.supported)cancelVideoSettingsTimeout();
             if(controls!=null)controls.videoSettings(videoSettings);
@@ -991,13 +1054,14 @@ public final class MainActivity extends Activity implements NativeSession.Listen
         if(!isFinishing()&&!enteredPictureInPicture&&ready&&(backgroundSession!=null||documentSession==null)&&prepareBackgroundSession(false)){
             captureBackgroundSession();backgroundSession.detach(this);backgroundSession.setBackground(true);
             mainHandler.removeCallbacks(presenceTick);recentPresence.setConnected(false,android.os.SystemClock.elapsedRealtime());announcementInbox.setConnected(false);
+            cancelVirtualScaleAutoRetry();
             cancelDisplayResolutionTimeout();if(displayResolutions.pending)displayResolutions.expire(displayResolutions.requested.id);
             finishVirtualScaleRequest();
             cancelVideoSettingsTimeout();if(videoSettings.pending)videoSettings.expire(videoSettings.requestId);
             resetRemoteVersionCheck();
         }else if(documentSession==null||documentSession!=session||isFinishing()){if(session!=null)end(isFinishing()?"":L10n.tr("远程窗口已关闭，或后台保活未能启动，会话已结束"));stopSignaling();}
         super.onStop();}
-    @Override protected void onDestroy(){dismissPrivacyUnlockDialog();mainHandler.removeCallbacks(documentTimeout);documentSession=null;documentToSave=null;appUpdates.setEnabled(false);pageHost.finish();resetRemoteVersionCheck();cancelVideoSettingsTimeout();cancelDisplayResolutionTimeout();previews.removeListener(previewChanged);if(privacyDialog!=null)privacyDialog.dismiss();if(previewDialog!=null)previewDialog.dismiss();announcementInbox.close();if(passwordDialog!=null)passwordDialog.dismiss();if(progressDialog!=null)progressDialog.dismiss();
+    @Override protected void onDestroy(){dismissPrivacyUnlockDialog();mainHandler.removeCallbacks(documentTimeout);documentSession=null;documentToSave=null;appUpdates.setEnabled(false);pageHost.finish();resetRemoteVersionCheck();cancelVideoSettingsTimeout();cancelDisplayResolutionTimeout();cancelVirtualScaleAutoRetry();previews.removeListener(previewChanged);if(privacyDialog!=null)privacyDialog.dismiss();if(previewDialog!=null)previewDialog.dismiss();announcementInbox.close();if(passwordDialog!=null)passwordDialog.dismiss();if(progressDialog!=null)progressDialog.dismiss();
         finishVirtualScaleRequest();
         if(connectionDialog!=null)connectionDialog.dismiss();
         boolean retained=!isFinishing()&&backgroundSession!=null&&!backgroundSession.ended&&RemoteSessionService.current()==backgroundSession;
