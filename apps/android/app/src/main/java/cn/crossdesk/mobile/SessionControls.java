@@ -13,7 +13,7 @@ final class SessionControls extends FrameLayout {
     private static final int MENU_BUTTON_SIZE_DP = 32;
     interface Actions {
         void disconnect(); void display(); void clipboard(); void key(int code);
-        void chord(int code,int[] modifiers); void shortcut(int code); void text(String value); void mute(); void mouse();
+        void chord(int code,int[] modifiers); void shortcut(int code); void text(String value); void mute(); default void mic(){} void mouse();
         default boolean textEdit(int deletions,String value){return false;}
         void videoSettings(int field,int value);
         default void displayResolution(RemoteDisplayResolutions.Mode mode) { }
@@ -63,7 +63,7 @@ final class SessionControls extends FrameLayout {
     private LinearLayout[] trafficRows;
     private TextView[] networkDetails;
     private View encryptionLock,encryptionOpen;
-    private boolean muted,relative,orbPositioned,secureAttentionVisible;
+    private boolean muted,micEnabled,relative,orbPositioned,secureAttentionVisible;
     private boolean displayScalingAvailable;
     private boolean virtualScalePending;
     private int virtualScalePercent;
@@ -216,6 +216,7 @@ final class SessionControls extends FrameLayout {
         mouseBar.setVisibility(VISIBLE);
     }
     void setMuted(boolean value){muted=value;if(menu!=null&&menuPage.equals("controls"))openMenu("controls");}
+    void setMicEnabled(boolean value){micEnabled=value;if(menu!=null&&menuPage.equals("controls"))openMenu("controls");}
     void videoSize(int width,int height){waiting.setVisibility(GONE);positionMouse();}
     void resetVideoStatistics(){statistics(new RemoteNetworkStatistics.Snapshot(network.report,0,0,0,Double.NaN,network.rtt,network.remoteEncoder,network.localDecoder));}
     void statistics(RemoteNetworkStatistics.Snapshot value){network=value;renderNetwork();}
@@ -243,18 +244,18 @@ final class SessionControls extends FrameLayout {
             scroll.setScrollBarStyle(View.SCROLLBARS_OUTSIDE_INSET);body.setPadding(0,0,ui.dp(6),0);
         }
         if(page.equals("controls")){
-            String[] labels={L10n.tr("键盘"),mouseVisible?L10n.tr("收起鼠标"):L10n.tr("虚拟鼠标"),relative?L10n.tr("相对鼠标"):L10n.tr("绝对鼠标"),L10n.tr("显示器"),L10n.tr("画面设置"),muted?L10n.tr("静音"):L10n.tr("声音"),L10n.tr("发送文件"),L10n.tr("网络状态"),"Ctrl+Alt+Del",L10n.tr("剪贴板"),L10n.tr("隐私屏")};
-            String[] icons={"keyboard","mouse","mouse","display","sliders","audio","folder","chart","lock","clipboard","eye"};
-            Runnable[] clicks={()->{closeMenu();toggleKeyboard();},this::toggleMouse,actions::mouse,actions::display,()->{openMenu("video");if(displayScalingAvailable)actions.virtualDisplayScale(0);},actions::mute,actions::sendFile,()->openMenu("network"),actions::secureAttention,actions::clipboard,actions::togglePrivacy};
+            String[] labels={L10n.tr("键盘"),mouseVisible?L10n.tr("收起鼠标"):L10n.tr("虚拟鼠标"),relative?L10n.tr("相对鼠标"):L10n.tr("绝对鼠标"),L10n.tr("显示器"),L10n.tr("画面设置"),muted?L10n.tr("静音"):L10n.tr("声音"),micEnabled?L10n.tr("关麦克风"):L10n.tr("麦克风"),L10n.tr("发送文件"),L10n.tr("网络状态"),"Ctrl+Alt+Del",L10n.tr("剪贴板"),L10n.tr("隐私屏")};
+            String[] icons={"keyboard","mouse","mouse","display","sliders","audio","mic","folder","chart","lock","clipboard","eye"};
+            Runnable[] clicks={()->{closeMenu();toggleKeyboard();},this::toggleMouse,actions::mouse,actions::display,()->{openMenu("video");if(displayScalingAvailable)actions.virtualDisplayScale(0);},actions::mute,actions::mic,actions::sendFile,()->openMenu("network"),actions::secureAttention,actions::clipboard,actions::togglePrivacy};
             menuColumns=controlColumns();
             java.util.List<Integer> visibleControls=new java.util.ArrayList<>();
             for(int index=0;index<labels.length;index++){
-                if(index==8&&!secureAttentionVisible||index==10&&!privacy.desktopAvailable)continue;
+                if(index==9&&!secureAttentionVisible||index==11&&!privacy.desktopAvailable)continue;
                 visibleControls.add(index);
             }
             int controlCount=visibleControls.size();
-            for(int row=0;row<(controlCount+menuColumns-1)/menuColumns;row++){LinearLayout line=ui.row();for(int col=0;col<menuColumns;col++){int position=row*menuColumns+col;if(position>=controlCount){View spacer=new View(getContext());LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,ui.dp(52),1);if(col>0)p.leftMargin=ui.dp(7);line.addView(spacer,p);continue;}int index=visibleControls.get(position);LinearLayout control=ui.column();control.setGravity(Gravity.CENTER);control.setBackground(ui.background(0xFFF0F0F2,10));MobileUi.Icon icon=ui.icon(icons[index],INK);control.addView(icon,ui.size(19,19));ui.gap(control,4);TextView caption=ui.text(labels[index],10,false);caption.setMaxLines(2);caption.setAutoSizeTextTypeUniformWithConfiguration(8,10,1,android.util.TypedValue.COMPLEX_UNIT_SP);caption.setGravity(Gravity.CENTER);control.addView(caption);control.setContentDescription(labels[index]);control.setClickable(true);control.setFocusable(true);control.setOnClickListener(v->clicks[index].run());
-                    if(index==10){privacyButton=control;privacyIcon=icon;privacyCaption=caption;}
+            for(int row=0;row<(controlCount+menuColumns-1)/menuColumns;row++){LinearLayout line=ui.row();for(int col=0;col<menuColumns;col++){int position=row*menuColumns+col;if(position>=controlCount){View spacer=new View(getContext());LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,ui.dp(52),1);if(col>0)p.leftMargin=ui.dp(7);line.addView(spacer,p);continue;}int index=visibleControls.get(position);boolean micOn=(index==6&&micEnabled);LinearLayout control=ui.column();control.setGravity(Gravity.CENTER);control.setBackground(ui.background(micOn?0xFFE4F0FF:0xFFF0F0F2,10));MobileUi.Icon icon=ui.icon(icons[index],micOn?BLUE:INK);control.addView(icon,ui.size(19,19));ui.gap(control,4);TextView caption=ui.text(labels[index],10,micOn);if(micOn)caption.setTextColor(BLUE);caption.setMaxLines(2);caption.setAutoSizeTextTypeUniformWithConfiguration(8,10,1,android.util.TypedValue.COMPLEX_UNIT_SP);caption.setGravity(Gravity.CENTER);control.addView(caption);control.setContentDescription(labels[index]);control.setClickable(true);control.setFocusable(true);control.setOnClickListener(v->clicks[index].run());
+                    if(index==11){privacyButton=control;privacyIcon=icon;privacyCaption=caption;}
                     LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,ui.dp(52),1);if(col>0)p.leftMargin=ui.dp(7);line.addView(control,p);
                 }body.addView(line);if((row+1)*menuColumns<controlCount)ui.gap(body,7);}
             privacyFeedback=ui.text("",11,false);privacyFeedback.setTextColor(SECONDARY);privacyFeedback.setPadding(0,ui.dp(7),0,0);privacyFeedback.setAccessibilityLiveRegion(ACCESSIBILITY_LIVE_REGION_POLITE);body.addView(privacyFeedback);renderPrivacy();

@@ -274,19 +274,28 @@ void PeerEventHandler::OnReceiveVideoBuffer(
 void PeerEventHandler::OnReceiveAudioBuffer(
     const char* data, size_t size, const char* user_id, size_t user_id_size,
     const char* src_id, size_t src_id_size, void* user_data) {
+  (void)src_id;
+  (void)src_id_size;
   auto* handler = static_cast<PeerEventHandler*>(user_data);
   if (!handler) return;
   auto callback = handler->EnterCallback();
   if (!callback || !handler->DataAllowed()) return;
   GuiRuntime* runtime = &handler->owner_;
+  const auto remote_id = handler->ConnectionKey(user_id, user_id_size);
+  const auto session = runtime->FindRemoteSession(remote_id);
+  if (!session) {
+    if (runtime->IsAuthorizedController(remote_id) &&
+        (!runtime->managed_host_frontend_ || handler->IsDirect())) {
+      runtime->devices_.PushRemoteMicAudio(data, size);
+    }
+    return;
+  }
   if (runtime->unattended_host_) {
     return;
   }
 
   std::lock_guard delivery_lock(runtime->audio_delivery_mutex_);
-  const auto session =
-      runtime->FindRemoteSession(handler->ConnectionKey(user_id, user_id_size));
-  if (!session || session->closing_ || !session->audio_allowed_.load()) return;
+  if (session->closing_ || !session->audio_allowed_.load()) return;
   runtime->audio_buffer_fresh_ = true;
 
   runtime->devices_.PushAudio(session->remote_id_, data, size);

@@ -130,6 +130,7 @@ final class MobileUi {
                 case "sliders":
                     for(int y=6;y<=18;y+=6){c.drawLine(3,y,21,y,paint);c.drawCircle(y==12?15:8,y,2,paint);}break;
                 case "audio":path(c,3,9,7,9,12,4,12,20,7,15,3,15,3,9);c.drawArc(10,5,21,19,-65,130,false,paint);break;
+                case "mic":c.drawRoundRect(9,3,15,13,3,3,paint);c.drawArc(6,8,18,17,0,180,false,paint);path(c,12,17,12,21);path(c,9,21,15,21);break;
                 case "mouse":c.drawRoundRect(5,2,19,22,7,7,paint);path(c,12,3,12,10);break;
                 case "folder":path(c,2,19,2,5,9,5,12,8,22,8,22,19,2,19);break;
                 case "chart":path(c,3,3,3,21,22,21);path(c,7,17,7,13);path(c,12,17,12,8);path(c,18,17,18,4);break;
