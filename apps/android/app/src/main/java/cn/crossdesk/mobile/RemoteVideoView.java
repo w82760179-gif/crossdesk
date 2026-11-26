@@ -41,16 +41,16 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     private boolean tabletTouch = true, tabletTouchActive;
     private int hardwareButtons;
     private final HostCursor host = new HostCursor();
+    private final int[] controlsFrom = new int[2], controlsTo = new int[2];
     private boolean implicitPrimary;
     private boolean tapConsumed, directTap;
     void hostCursor(org.json.JSONObject state) {
         if (host.update(state)) cursor.postInvalidateOnAnimation();
     }
     boolean touchFromControls(View source, MotionEvent event) {
-        int[] from=new int[2], to=new int[2];
-        source.getLocationOnScreen(from); getLocationOnScreen(to);
+        source.getLocationOnScreen(controlsFrom); getLocationOnScreen(controlsTo);
         MotionEvent local=MotionEvent.obtain(event);
-        local.offsetLocation(from[0]-to[0],from[1]-to[1]);
+        local.offsetLocation(controlsFrom[0]-controlsTo[0],controlsFrom[1]-controlsTo[1]);
         try { return touch(local); } finally { local.recycle(); }
     }
     void setRelative(boolean value) { releaseMouse(); relative=value; if (!value) releasePointerCaptureSafe(); }
@@ -422,9 +422,12 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
     private final class Cursor extends View {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private final Path arrow = new Path();
+        private final Rect cursorDst = new Rect();
+        private final float density;
         private final float arrowWidth = 12, arrowHeight = 15;
         Cursor(Context context) {
             super(context); setClickable(true); setContentDescription(L10n.tr("远程桌面触控区域"));
+            density = context.getResources().getDisplayMetrics().density;
             // Match the iOS RemoteCursorArrowShape in density-independent units.
             arrow.moveTo(arrowWidth*.08f,arrowHeight*.04f);
             arrow.lineTo(arrowWidth*.08f,arrowHeight*.78f);
@@ -454,7 +457,6 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
             canvas.translate(viewport.left()+x*viewport.width(),viewport.top()+y*viewport.height());
             if(host.bitmap!=null){
                 float scale=(viewport.width()/host.desktopWidth)*0.68f;
-                float density=getResources().getDisplayMetrics().density;
                 float minBoxPx=17f*density;
                 float maxBoxPx=25.5f*density;
                 float bitmapMax=Math.max(host.bitmap.getWidth(),host.bitmap.getHeight());
@@ -465,11 +467,11 @@ final class RemoteVideoView extends FrameLayout implements SurfaceHolder.Callbac
                 }
                 canvas.scale(scale,scale);
                 paint.setColor(Color.WHITE);paint.setStyle(Paint.Style.FILL);paint.setFilterBitmap(true);
-                canvas.drawBitmap(host.bitmap,null,new android.graphics.Rect(-host.hotX,-host.hotY,
-                    host.bitmap.getWidth()-host.hotX,host.bitmap.getHeight()-host.hotY),paint);
+                cursorDst.set(-host.hotX,-host.hotY,host.bitmap.getWidth()-host.hotX,host.bitmap.getHeight()-host.hotY);
+                canvas.drawBitmap(host.bitmap,null,cursorDst,paint);
                 canvas.restoreToCount(saved); return;
             }
-            float density=getResources().getDisplayMetrics().density;canvas.scale(density*0.76f,density*0.76f);
+            canvas.scale(density*0.76f,density*0.76f);
             if(host.shape==7){
                 paint.setStyle(Paint.Style.STROKE);paint.setStrokeWidth(1.6f);paint.setColor(Color.BLACK);
                 canvas.drawLine(0,-8,0,8,paint);canvas.drawLine(-3,-8,3,-8,paint);canvas.drawLine(-3,8,3,8,paint);

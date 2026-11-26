@@ -130,7 +130,7 @@ final class SessionControls extends FrameLayout {
     SessionControls(Context context,MobileUi ui,Actions actions){
         super(context);this.ui=ui;this.actions=actions;
         keyboard=new RemoteKeyboard(context,ui,actions,()->{requestLayout();positionMouse();});
-        addView(keyboard,new LayoutParams(-1,ui.dp(44),Gravity.BOTTOM));
+        addView(keyboard,new LayoutParams(-1,1,Gravity.BOTTOM));
         // This container must remain transparent to remote touch outside its controls.
         waiting=ui.column();waiting.setMinimumWidth(ui.dp(200));waiting.setGravity(Gravity.CENTER);waiting.setPadding(ui.dp(20),ui.dp(20),ui.dp(20),ui.dp(20));waiting.setBackground(ui.background(0xB0202024,14));
         ProgressBar progress=new ProgressBar(context);progress.setIndeterminateTintList(android.content.res.ColorStateList.valueOf(Color.WHITE));waiting.addView(progress,ui.size(28,28));ui.gap(waiting,12);TextView message=ui.text(L10n.tr("等待远端画面…"),14,false);message.setTextColor(Color.WHITE);message.setGravity(Gravity.CENTER);waiting.addView(message);addView(waiting,new LayoutParams(-2,-2,Gravity.CENTER));

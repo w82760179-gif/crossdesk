@@ -171,7 +171,8 @@ final class NativeSession implements AutoCloseable {
         return output;
     }
     private final OrderedPointerQueue inputQueue = new OrderedPointerQueue(RTC,
-        (x, y) -> { if (!closed && connected) nPointer(handle, x, y, 0, 0); });
+        (x, y) -> { if (!closed && connected) nPointer(handle, x, y, 0, 0); },
+        (ids, phases, xs, ys, count) -> { if (!closed && connected) nTouch(handle, ids, phases, xs, ys, count); });
     private void execute(Runnable task) {
         inputQueue.execute(() -> { if (!closed) task.run(); });
     }
@@ -319,7 +320,10 @@ final class NativeSession implements AutoCloseable {
         int[] cPhases = count > 0 ? java.util.Arrays.copyOf(phases, count) : new int[0];
         float[] cXs = count > 0 ? java.util.Arrays.copyOf(xs, count) : new float[0];
         float[] cYs = count > 0 ? java.util.Arrays.copyOf(ys, count) : new float[0];
-        execute(() -> { if (connected) nTouch(handle, cIds, cPhases, cXs, cYs, count); });
+        boolean pureMove = count > 0;
+        for (int i = 0; i < count; i++) { if (cPhases[i] != 1) { pureMove = false; break; } }
+        if (pureMove) inputQueue.touchMove(cIds, cPhases, cXs, cYs, count);
+        else execute(() -> { if (connected) nTouch(handle, cIds, cPhases, cXs, cYs, count); });
     }
     void key(int code, boolean down) { execute(() -> { if (connected) nKey(handle, code, down); }); }
     void chord(int code,int[] modifiers) {

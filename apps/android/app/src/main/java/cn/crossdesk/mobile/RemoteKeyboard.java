@@ -20,6 +20,7 @@ final class RemoteKeyboard extends LinearLayout {
     private final SessionControls.Actions actions;
     final RemoteKeyboardInput editor;
     private final Runnable changed;
+    private final FrameLayout header;
     private final LinearLayout toolbar,keys;
     private final TextView switchButton,lettersButton,functionsButton;
     private final LinearLayout quickKeys;
@@ -36,13 +37,13 @@ final class RemoteKeyboard extends LinearLayout {
 
     RemoteKeyboard(Context context,MobileUi ui,SessionControls.Actions actions,Runnable changed) {
         super(context);this.ui=ui;this.actions=actions;this.changed=changed;setOrientation(VERTICAL);
-        setVisibility(GONE);setClickable(true);
+        setVisibility(GONE);setClickable(false);
         editor=new RemoteKeyboardInput(context,new RemoteKeyboardInput.Sender(){
             public boolean edit(int count,String text){return actions.textEdit(count,text);}
             public void key(int code){actions.key(code);}
         });
         shortcutPanel=new RemoteShortcutPanel(context,ui,this::sendShortcut,()->{render();changed.run();});
-        FrameLayout header=new FrameLayout(context);addView(header,new LayoutParams(-1,ui.dp(44)));
+        header=new FrameLayout(context);addView(header,new LayoutParams(-1,1));
         header.addView(editor,new FrameLayout.LayoutParams(1,1,Gravity.BOTTOM));
         toolbar=ui.row();toolbar.setGravity(Gravity.CENTER_VERTICAL);toolbar.setPadding(ui.dp(6),0,ui.dp(6),0);
         header.addView(toolbar,new FrameLayout.LayoutParams(-1,-1));
@@ -80,7 +81,7 @@ final class RemoteKeyboard extends LinearLayout {
         int available=getParent() instanceof View?((View)getParent()).getMeasuredHeight()-ui.dp(44):height;
         return available>0?Math.min(height,available):height;
     }
-    int preferredHeight(){return ui.dp(44)+(computer?keyAreaHeight():0);}
+    int preferredHeight(){return computer?ui.dp(44)+keyAreaHeight():1;}
     void toggle(){if(opened)close();else open();}
     void open(){
         opened=true;computer=shortcuts=false;modifiers.clear();editor.start();setVisibility(VISIBLE);render();changed.run();
@@ -183,7 +184,12 @@ final class RemoteKeyboard extends LinearLayout {
         else manager.hideSoftInputFromWindow(editor.getWindowToken(),0);
     }
     private void render(){
-        setBackgroundColor(dark()?0xFF202124:0xFFE8EAED);
+        setBackgroundColor(computer?(dark()?0xFF202124:0xFFE8EAED):Color.TRANSPARENT);
+        setClickable(computer);
+        toolbar.setVisibility(computer?VISIBLE:GONE);
+        ViewGroup.LayoutParams hp=header.getLayoutParams();
+        int targetHeaderHeight=computer?ui.dp(44):1;
+        if(hp!=null&&hp.height!=targetHeaderHeight){hp.height=targetHeaderHeight;header.setLayoutParams(hp);}
         switchButton.setText(computer?L10n.tr("系统键盘"):L10n.tr("电脑键盘"));switchButton.setTextColor(foreground());
         lettersButton.setVisibility(computer&&!shortcuts?VISIBLE:GONE);functionsButton.setVisibility(computer&&!shortcuts?VISIBLE:GONE);
         quickScroll.setVisibility(computer?GONE:VISIBLE);panelTitle.setVisibility(computer&&shortcuts?VISIBLE:GONE);panelTitle.setTextColor(foreground());
