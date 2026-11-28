@@ -59,6 +59,8 @@ using crossdesk::ScopedInteractiveDesktop;
 using Json = nlohmann::json;
 
 constexpr DWORD kSessionHelperStatePollMs = 1000;
+constexpr DWORD kSessionHelperIdlePollMs = 2500;
+constexpr ULONGLONG kSessionHelperIdleProcessScanMs = 3000;
 constexpr ULONGLONG kCaptureOwnerLeaseMs = 4000;
 
 std::atomic<HANDLE> g_session_helper_desktop_switch_event{nullptr};
@@ -198,7 +200,8 @@ void PumpSessionHelperMessages() {
 }
 
 DWORD WaitForSessionHelperStateChange(HANDLE stop_event,
-                                      HANDLE desktop_switch_event) {
+                                      HANDLE desktop_switch_event,
+                                      DWORD poll_ms) {
   std::vector<HANDLE> wait_handles;
   if (stop_event != nullptr) {
     wait_handles.push_back(stop_event);
@@ -210,7 +213,7 @@ DWORD WaitForSessionHelperStateChange(HANDLE stop_event,
   const DWORD handle_count = static_cast<DWORD>(wait_handles.size());
   const DWORD wait_result = MsgWaitForMultipleObjects(
       handle_count, wait_handles.empty() ? nullptr : wait_handles.data(), FALSE,
-      kSessionHelperStatePollMs, QS_ALLINPUT);
+      poll_ms, QS_ALLINPUT);
   if (wait_result == WAIT_OBJECT_0 + handle_count) {
     PumpSessionHelperMessages();
     return WAIT_TIMEOUT;
@@ -288,45 +291,41 @@ InputDesktopInfo GetInputDesktopInfo() {
   return info;
 }
 
-bool IsProcessRunningInCurrentSession(const wchar_t* executable_name,
-                                      DWORD session_id) {
+void QuerySessionUiProcesses(DWORD session_id, bool* lock_app_out,
+                             bool* logon_ui_out, bool* consent_ui_out) {
+  bool lock_app = false;
+  bool logon_ui = false;
+  bool consent_ui = false;
   HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-  if (snapshot == INVALID_HANDLE_VALUE) {
-    return false;
+  if (snapshot != INVALID_HANDLE_VALUE) {
+    PROCESSENTRY32W entry{};
+    entry.dwSize = sizeof(entry);
+    if (Process32FirstW(snapshot, &entry)) {
+      do {
+        const bool is_lock_app =
+            !lock_app && _wcsicmp(entry.szExeFile, L"LockApp.exe") == 0;
+        const bool is_logon_ui =
+            !logon_ui && _wcsicmp(entry.szExeFile, L"LogonUI.exe") == 0;
+        const bool is_consent_ui =
+            !consent_ui && _wcsicmp(entry.szExeFile, L"Consent.exe") == 0;
+        if (!is_lock_app && !is_logon_ui && !is_consent_ui) {
+          continue;
+        }
+        DWORD process_session_id = 0xFFFFFFFF;
+        if (ProcessIdToSessionId(entry.th32ProcessID, &process_session_id) &&
+            process_session_id == session_id) {
+          if (is_lock_app) lock_app = true;
+          if (is_logon_ui) logon_ui = true;
+          if (is_consent_ui) consent_ui = true;
+          if (lock_app && logon_ui && consent_ui) break;
+        }
+      } while (Process32NextW(snapshot, &entry));
+    }
+    CloseHandle(snapshot);
   }
-
-  PROCESSENTRY32W entry{};
-  entry.dwSize = sizeof(entry);
-  bool found = false;
-  if (Process32FirstW(snapshot, &entry)) {
-    do {
-      if (_wcsicmp(entry.szExeFile, executable_name) != 0) {
-        continue;
-      }
-
-      DWORD process_session_id = 0xFFFFFFFF;
-      if (ProcessIdToSessionId(entry.th32ProcessID, &process_session_id) &&
-          process_session_id == session_id) {
-        found = true;
-        break;
-      }
-    } while (Process32NextW(snapshot, &entry));
-  }
-
-  CloseHandle(snapshot);
-  return found;
-}
-
-bool IsLogonUiRunningInCurrentSession(DWORD session_id) {
-  return IsProcessRunningInCurrentSession(L"LogonUI.exe", session_id);
-}
-
-bool IsConsentUiRunningInCurrentSession(DWORD session_id) {
-  return IsProcessRunningInCurrentSession(L"Consent.exe", session_id);
-}
-
-bool IsLockAppRunningInCurrentSession(DWORD session_id) {
-  return IsProcessRunningInCurrentSession(L"LockApp.exe", session_id);
+  if (lock_app_out) *lock_app_out = lock_app;
+  if (logon_ui_out) *logon_ui_out = logon_ui;
+  if (consent_ui_out) *consent_ui_out = consent_ui;
 }
 
 bool QuerySessionLockState(DWORD session_id, bool* session_locked_out) {
@@ -396,27 +395,50 @@ std::string BuildErrorJson(const char* error, DWORD error_code = 0) {
   return json.dump();
 }
 
-void UpdateHelperState(HelperState* helper_state) {
+void UpdateHelperState(HelperState* helper_state,
+                       bool force_process_scan = false) {
   if (helper_state == nullptr) {
     return;
   }
 
+  static ULONGLONG last_process_scan_tick = 0;
+  static bool cached_lock_app = false;
+  static bool cached_logon_ui = false;
+  static bool cached_consent_ui = false;
+
   const ULONGLONG sample_started = GetTickCount64();
-  bool lock_app_process_running =
-      IsLockAppRunningInCurrentSession(helper_state->session_id);
-  bool logon_ui_visible =
-      IsLogonUiRunningInCurrentSession(helper_state->session_id);
-  bool consent_ui_visible =
-      IsConsentUiRunningInCurrentSession(helper_state->session_id);
-  // Process enumeration can straddle an unlock. Observe the input desktop
-  // afterwards, and expose the sample's start time for service-side rejection.
   InputDesktopInfo desktop_info = GetInputDesktopInfo();
-  const bool secure_desktop_active = crossdesk::IsSecureInputDesktop(
+  bool secure_desktop_active = crossdesk::IsSecureInputDesktop(
       desktop_info.available, desktop_info.name, desktop_info.error_code);
   bool session_locked = false;
-  if (!QuerySessionLockState(helper_state->session_id, &session_locked)) {
-    session_locked =
-        lock_app_process_running || logon_ui_visible || secure_desktop_active;
+  const bool lock_state_known =
+      QuerySessionLockState(helper_state->session_id, &session_locked);
+
+  const bool need_process_scan =
+      force_process_scan || !lock_state_known || session_locked ||
+      secure_desktop_active || last_process_scan_tick == 0 ||
+      (sample_started - last_process_scan_tick) >=
+          kSessionHelperIdleProcessScanMs;
+
+  bool lock_app_process_running = cached_lock_app;
+  bool logon_ui_visible = cached_logon_ui;
+  bool consent_ui_visible = cached_consent_ui;
+  if (need_process_scan) {
+    QuerySessionUiProcesses(helper_state->session_id, &lock_app_process_running,
+                            &logon_ui_visible, &consent_ui_visible);
+    cached_lock_app = lock_app_process_running;
+    cached_logon_ui = logon_ui_visible;
+    cached_consent_ui = consent_ui_visible;
+    last_process_scan_tick = sample_started;
+    // Process enumeration can straddle an unlock. Re-observe the input desktop
+    // afterwards so stale pre-unlock snapshots cannot outlive an unlock.
+    desktop_info = GetInputDesktopInfo();
+    secure_desktop_active = crossdesk::IsSecureInputDesktop(
+        desktop_info.available, desktop_info.name, desktop_info.error_code);
+    if (!QuerySessionLockState(helper_state->session_id, &session_locked)) {
+      session_locked =
+          lock_app_process_running || logon_ui_visible || secure_desktop_active;
+    }
   }
   const bool lock_app_visible = session_locked && lock_app_process_running;
 
@@ -2365,8 +2387,10 @@ int main(int argc, char* argv[]) {
   bool last_input_desktop_available = false;
   DWORD last_input_desktop_error = ERROR_SUCCESS;
   std::string last_stage;
+  bool force_scan = true;
   while (true) {
-    UpdateHelperState(&helper_state);
+    UpdateHelperState(&helper_state, force_scan);
+    force_scan = false;
 
     std::string desktop_name;
     bool session_locked = false;
@@ -2422,14 +2446,23 @@ int main(int argc, char* argv[]) {
       last_stage = stage;
     }
 
-    DWORD wait_result =
-        WaitForSessionHelperStateChange(stop_event, desktop_switch_event);
+    const DWORD poll_ms =
+        (!session_locked && !secure_desktop_active && !consent_ui_visible)
+            ? kSessionHelperIdlePollMs
+            : kSessionHelperStatePollMs;
+    DWORD wait_result = WaitForSessionHelperStateChange(
+        stop_event, desktop_switch_event, poll_ms);
     if (stop_event != nullptr && wait_result == WAIT_OBJECT_0) {
       break;
     }
     if (wait_result == WAIT_FAILED) {
       LOG_WARN("Session helper wait failed, error={}", GetLastError());
       break;
+    }
+    if (desktop_switch_event != nullptr &&
+        wait_result == (stop_event != nullptr ? WAIT_OBJECT_0 + 1
+                                              : WAIT_OBJECT_0)) {
+      force_scan = true;
     }
     if (wait_result != WAIT_TIMEOUT && wait_result != WAIT_OBJECT_0 &&
         wait_result != WAIT_OBJECT_0 + 1) {

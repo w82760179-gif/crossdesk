@@ -2279,6 +2279,16 @@ std::string CrossDeskServiceHost::HandleIpcCommand(const std::string& command,
   if (normalized == "sas") {
     return SendSecureAttentionSequence(client_session_id);
   }
+  if (normalized == "stop") {
+    if (client_session_id == 0xFFFFFFFF ||
+        client_session_id != WTSGetActiveConsoleSessionId()) {
+      return BuildErrorJson("session_mismatch");
+    }
+    LOG_INFO("Service stop requested via IPC by console session {}",
+             client_session_id);
+    RequestStop();
+    return "{\"ok\":true,\"reply\":\"stopping\"}";
+  }
   int key_code = 0;
   bool is_down = false;
   uint32_t scan_code = 0;

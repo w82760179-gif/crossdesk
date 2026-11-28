@@ -73,6 +73,7 @@
 #include "platform/windows/gui/window_taskbar.h"
 #include "platform/windows/service/autostart_control.h"
 #include "platform/windows/service/interactive_desktop.h"
+#include "platform/windows/service/service_host.h"
 #include "platform/windows/service/unattended_config.h"
 #elif defined(__APPLE__)
 #include "features/input/scroll_accumulator.h"
@@ -1520,12 +1521,41 @@ void GuiApplication::InitializeUi() {
   SyncMainWindow();
 }
 
+bool GuiApplication::IsTrayIdle() {
+  if (exit_ || !ui_) return false;
+  if (ui_->main->window().is_visible() &&
+      !ui_->main->window().is_minimized()) {
+    return false;
+  }
+  if (ui_->wall->window().is_visible() &&
+      !ui_->wall->window().is_minimized()) {
+    return false;
+  }
+  if (ui_->stream && (*ui_->stream)->window().is_visible()) return false;
+  if (ui_->server && (*ui_->server)->window().is_visible()) return false;
+  if (ui_->server_bar && (*ui_->server_bar)->window().is_visible()) return false;
+  if (ui_->clipboard_notification &&
+      (*ui_->clipboard_notification)->window().is_visible()) {
+    return false;
+  }
+  if (!ui_->file_browsers.empty() || !ui_->transfer_notifications.empty()) {
+    return false;
+  }
+  if (ui_->file_dialog_open || lan_connecting_) return false;
+  if (HasActiveSession()) return false;
+  return true;
+}
+
 void GuiApplication::ShowMainWindow(const std::string& activation_token) {
 #if !defined(__linux__) || defined(__OHOS__)
   (void)activation_token;
 #endif
   if (!ui_) {
     return;
+  }
+  if (tick_idle_) {
+    tick_idle_ = false;
+    ui_->timer.start(slint::TimerMode::Repeated, 16ms, [this] { Tick(); });
   }
   ui_->main->show();
   ui_->main->window().set_minimized(false);
@@ -1568,6 +1598,9 @@ void GuiApplication::InitializeSystemTray() {
     ui_->main->set_settings_open(true);
   };
   auto exit_app = [this] {
+#if _WIN32
+    stop_service_on_exit_ = true;
+#endif
     exit_ = true;
   };
 #if _WIN32
@@ -2621,7 +2654,16 @@ void GuiApplication::Tick() {
 #endif
   TickLan();
   TickControllerTrust();
-  if (LanAvailable()) {
+  const bool tray_idle = IsTrayIdle();
+  if (tray_idle != tick_idle_) {
+    tick_idle_ = tray_idle;
+    ui_->timer.start(slint::TimerMode::Repeated, tray_idle ? 250ms : 16ms,
+                     [this] { Tick(); });
+    if (!tray_idle) {
+      ScheduleNextVideoFrame();
+    }
+  }
+  if (!tray_idle && LanAvailable()) {
     const auto address = lan_->identity().settings().value("address", "");
     ui_->main->set_lan_listen_all(lan_->identity().listen_all());
     ui_->main->set_lan_password_pending(lan_->password_pending());
@@ -2720,10 +2762,12 @@ void GuiApplication::Tick() {
       }
     }
   }
-  const auto lan_message = lan_error_.rfind("ConnectionFailed", 0) == 0
-                               ? std::string("ConnectionFailed")
-                               : lan_error_;
-  ui_->main->set_lan_message(UiText(lan_message));
+  if (!tray_idle) {
+    const auto lan_message = lan_error_.rfind("ConnectionFailed", 0) == 0
+                                 ? std::string("ConnectionFailed")
+                                 : lan_error_;
+    ui_->main->set_lan_message(UiText(lan_message));
+  }
   PollUpdateCheck();
   HandleSessionCleanup();
   HandlePasswordChangeResult();
@@ -2830,28 +2874,32 @@ void GuiApplication::Tick() {
   ShareLocalCursorState();
 
   CloseRemoteClosedTabs();
-  UpdateLocalization();
-  SyncMainWindow();
-  SyncGallery();
-  SyncConnectionDialog();
-  SyncPlatformDialogs();
-  // Wait for startup notices and user interactions to finish. Once shown,
-  // never reopen it during this run, even if saving the dismissal fails.
-  if (ui_->sponsorship_prompt_pending &&
-      ui_->main->window().is_visible() &&
-      !ui_->main->window().is_minimized() &&
-      ui_->main->get_can_show_sponsorship() &&
-      !ui_->file_dialog_open && !HasActiveSession()) {
-    ui_->sponsorship_prompt_pending = false;
-    ui_->main->set_sponsorship_open(true);
-  }
-  SyncStreamWindow();
-  SyncVideoFrameGapStats();
+  if (!tray_idle) {
+    UpdateLocalization();
+    SyncMainWindow();
+    SyncGallery();
+    SyncConnectionDialog();
+    SyncPlatformDialogs();
+    // Wait for startup notices and user interactions to finish. Once shown,
+    // never reopen it during this run, even if saving the dismissal fails.
+    if (ui_->sponsorship_prompt_pending &&
+        ui_->main->window().is_visible() &&
+        !ui_->main->window().is_minimized() &&
+        ui_->main->get_can_show_sponsorship() &&
+        !ui_->file_dialog_open && !HasActiveSession()) {
+      ui_->sponsorship_prompt_pending = false;
+      ui_->main->set_sponsorship_open(true);
+    }
+    SyncStreamWindow();
+    SyncVideoFrameGapStats();
 #if defined(__APPLE__)
-  UpdateVideoFrameScheduler();
+    UpdateVideoFrameScheduler();
 #endif
-  SyncServerWindow();
-  SyncTrustedDevices();
+    SyncServerWindow();
+    SyncTrustedDevices();
+  } else {
+    SyncServerWindow();
+  }
   for (auto it = ui_->file_browsers.begin(); it != ui_->file_browsers.end();) {
     if (!it->second->Tick()) it = ui_->file_browsers.erase(it);
     else {
@@ -4496,6 +4544,12 @@ void GuiApplication::ScheduleNextVideoFrame() {
     return;
   }
 #endif
+  if (IsTrayIdle()) {
+    next_video_frame_time_ = {};
+    ui_->video_timer.start(slint::TimerMode::SingleShot, 250ms,
+                           [this] { ScheduleNextVideoFrame(); });
+    return;
+  }
 
   constexpr auto frame_interval = std::chrono::nanoseconds(1'000'000'000 / 60);
   const auto now = std::chrono::steady_clock::now();
@@ -7478,6 +7532,17 @@ void GuiApplication::Cleanup() {
   updater_.reset();
 #endif
   SDL_Quit();
+#if _WIN32
+  if (stop_service_on_exit_) {
+    LOG_INFO("Tray exit requested: stopping CrossDeskService background host");
+    const auto reply = QueryCrossDeskService("stop", 2000);
+    const auto parsed = nlohmann::json::parse(reply, nullptr, false);
+    const bool ipc_ok = parsed.is_object() && parsed.value("ok", false);
+    if (!ipc_ok) {
+      StopCrossDeskService(5000);
+    }
+  }
+#endif
 }
 
 }  // namespace crossdesk

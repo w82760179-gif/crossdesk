@@ -61,6 +61,7 @@ private:
   void BindTrustedDeviceCallbacks(bool gallery_window = false);
   void BindStreamCallbacks();
   void BindServerCallbacks();
+  bool IsTrayIdle();
   void Tick();
 #ifdef _WIN32
   void TickLocalHost();
@@ -156,6 +157,10 @@ private:
   std::chrono::steady_clock::time_point next_video_frame_time_{};
   std::chrono::steady_clock::time_point last_video_frame_gap_log_time_{};
   SignalConnectionIndicator signal_connection_indicator_;
+  bool tick_idle_ = false;
+#ifdef _WIN32
+  bool stop_service_on_exit_ = false;
+#endif
 #if (defined(__linux__) && !defined(__OHOS__)) && !defined(__APPLE__)
   bool use_xwayland_gui_ = false;
   bool use_x11_custom_titlebar_ = false;
